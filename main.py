@@ -120,7 +120,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📦 Drip Client Proxy 🛍️", callback_data="comprar_proxy")],
             [InlineKeyboardButton("📦 Drip Client Root 🛍️", callback_data="comprar_root")],
             [InlineKeyboardButton("📦 Drip Client Pc 🛍️", callback_data="comprar_pc")],
-            [InlineKeyboardButton("⬅️ Volver a las Categorías", callback_data="ver_catalogo")]
+            [InlineKeyboardButton("⬅️ Volver al las Categorías", callback_data="ver_catalogo")]
         ]
         await query.edit_message_text("📁 **DRIP CLIENT OFICIAL** 🟣\n\n📦 PRODUCTOS DISPONIBLES 🔥\nSelecciona lo que te vas a llevar:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -167,12 +167,10 @@ async def comando_dar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ El ID y el monto deben ser numéricos válidos.")
         return
 
-    # Búsqueda directa ultrarrápida por clave de diccionario sin bucles lentos
     if id_buscado in DB_USUARIOS:
         DB_USUARIOS[id_buscado]["saldo"] += monto
         nombre_cliente = DB_USUARIOS[id_buscado]["nombre"]
     else:
-        # Si el usuario no ha iniciado el bot, se crea directamente de forma instantánea
         DB_USUARIOS[id_buscado] = {
             "nombre": "Usuario Externo",
             "id_cuenta": id_buscado_str,
@@ -186,7 +184,7 @@ async def comando_dar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-if __name__ == '__main__':
+def main():
     app = ApplicationBuilder().token("8717156909:AAFU4M2eeJpgIBCcjzNfdLx-CoQQE6gJr5Y").build()
     
     app.add_handler(CommandHandler("start", start))
@@ -195,3 +193,7 @@ if __name__ == '__main__':
     
     print("Bot optimizado y ultrarrápido listo...")
     app.run_polling()
+
+if __name__ == '__main__':
+    main()
+        
