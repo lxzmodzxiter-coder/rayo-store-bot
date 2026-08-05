@@ -1,102 +1,346 @@
-import asyncio
-import logging
-import os
-from threading import Thread
+# ============================================================
+# MAIN.PY
+# RAYO FIX BOT
+# PARTE 1
+# ============================================================
 
-from flask import Flask
+
+import asyncio
+
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 
-from database import init_db
+
 from functions import router
 
 
-# ==========================================
-# CONFIGURACIÓN
-# ==========================================
+# Token del bot
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = os.getenv("OWNER_ID")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-logger = logging.getLogger(__name__)
+TOKEN = "TU_TOKEN_AQUI"
 
 
-# ==========================================
-# FLASK (RENDER)
-# ==========================================
 
-app = Flask(__name__)
-
-
-@app.route("/")
-def home():
-    return "⚡ RAYO FIX STORE ONLINE"
-
-
-def run_web():
-    port = int(os.getenv("PORT", "10000"))
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
-
-
-Thread(
-    target=run_web,
-    daemon=True
-).start()
-
-
-# ==========================================
-# BOT
-# ==========================================
-
-bot = Bot(
-    token=BOT_TOKEN,
-    default=DefaultBotProperties(
-        parse_mode=ParseMode.HTML
-    )
-)
-
-dp = Dispatcher()
-
-dp.include_router(router)
-
-
-# ==========================================
-# INICIO
-# ==========================================
+# ============================================================
+# INICIO DEL BOT
+# ============================================================
 
 async def main():
 
-    logger.info("Iniciando base de datos...")
-
-    init_db()
-
-    logger.info("Base de datos iniciada.")
-
-    logger.info("Bot iniciado correctamente.")
-
-    await dp.start_polling(bot)
+    bot = Bot(
+        token=TOKEN
+    )
 
 
-# ==========================================
-# EJECUCIÓN
-# ==========================================
+    dp = Dispatcher()
+
+
+
+    # Conectar funciones
+
+    dp.include_router(
+        router
+    )
+
+
+
+    print(
+        """
+⚡ RAYO FIX BOT
+
+✅ Bot iniciado correctamente
+"""
+    )
+
+
+
+    await dp.start_polling(
+        bot
+    )
+
+
+
+# ============================================================
+# EJECUTAR
+# ============================================================
+
+if __name__ == "__main__":
+
+    asyncio.run(
+        main()
+    )
+    # ============================================================
+# MAIN.PY
+# RAYO FIX BOT
+# PARTE 2
+# ============================================================
+
+
+import asyncio
+
+
+from aiogram import Bot, Dispatcher
+
+from aiogram.types import BotCommand
+
+
+from functions import router
+
+
+from database import (
+    create_tables,
+    create_logs_table
+)
+
+
+
+TOKEN = "TU_TOKEN_AQUI"
+
+
+
+# ============================================================
+# COMANDOS DEL BOT
+# ============================================================
+
+async def set_commands(
+    bot: Bot
+):
+
+    commands = [
+
+        BotCommand(
+            command="start",
+            description="Iniciar bot"
+        ),
+
+        BotCommand(
+            command="profile",
+            description="Ver perfil"
+        ),
+
+        BotCommand(
+            command="help",
+            description="Ayuda"
+        )
+
+    ]
+
+
+    await bot.set_my_commands(
+        commands
+    )
+
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+async def main():
+
+
+    # Crear base de datos
+
+    create_tables()
+
+    create_logs_table()
+
+
+
+    bot = Bot(
+        token=TOKEN
+    )
+
+
+    dp = Dispatcher()
+
+
+
+    dp.include_router(
+        router
+    )
+
+
+
+    # Registrar comandos
+
+    await set_commands(
+        bot
+    )
+
+
+
+    print(
+        """
+⚡ RAYO FIX BOT
+
+✅ Base de datos cargada
+✅ Comandos configurados
+✅ Bot online
+"""
+    )
+
+
+
+    await dp.start_polling(
+        bot
+    )
+
+
+
+# ============================================================
+# EJECUTAR
+# ============================================================
+
+if __name__ == "__main__":
+
+    asyncio.run(
+        main()
+    )
+    # ============================================================
+# MAIN.PY
+# RAYO FIX BOT
+# PARTE 3 FINAL
+# ============================================================
+
+
+import asyncio
+import logging
+
+
+from aiogram import Bot, Dispatcher
+
+
+from functions import router
+
+
+from database import (
+    create_tables,
+    create_logs_table
+)
+
+
+
+TOKEN = "TU_TOKEN_AQUI"
+
+
+
+# ============================================================
+# LOGS
+# ============================================================
+
+logging.basicConfig(
+    level=logging.INFO
+)
+
+
+
+# ============================================================
+# MANEJO DE ERRORES
+# ============================================================
+
+async def error_handler(
+    event,
+    exception
+):
+
+    logging.error(
+        f"Error detectado: {exception}"
+    )
+
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+async def main():
+
+
+    # Base de datos
+
+    create_tables()
+
+    create_logs_table()
+
+
+
+    bot = Bot(
+        token=TOKEN
+    )
+
+
+    dp = Dispatcher()
+
+
+
+    dp.include_router(
+        router
+    )
+
+
+
+    # Registrar errores
+
+    dp.errors.register(
+        error_handler
+    )
+
+
+
+    try:
+
+        print(
+            """
+⚡ RAYO FIX BOT
+
+━━━━━━━━━━━━━━━━
+
+🟢 Sistema iniciado
+🗄️ Base de datos OK
+🤖 Bot conectado
+
+━━━━━━━━━━━━━━━━
+"""
+        )
+
+
+        await dp.start_polling(
+            bot
+        )
+
+
+
+    finally:
+
+
+        await bot.session.close()
+
+
+        print(
+            """
+🔴 RAYO FIX BOT
+
+Bot detenido correctamente.
+"""
+        )
+
+
+
+# ============================================================
+# EJECUTAR BOT
+# ============================================================
 
 if __name__ == "__main__":
 
     try:
 
-        asyncio.run(main())
+        asyncio.run(
+            main()
+        )
 
-    except (KeyboardInterrupt, SystemExit):
 
-        logger.info("Bot detenido.")
+    except KeyboardInterrupt:
+
+        print(
+            "Bot cerrado manualmente."
+)
