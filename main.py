@@ -39,7 +39,6 @@ ADMINS_IDS = []
 USER_CREDITS = {}
 ALL_USERS = set()
 
-# URL estable del banner oficial
 BANNER_IMAGE_URL = "https://i.ibb.co/3m20gX28/51614.jpg"
 
 # --- MENÚ PRINCIPAL PROFESIONAL Y ORDENADO ---
@@ -49,33 +48,26 @@ def main_menu(user_id):
 
     keyboard = InlineKeyboardMarkup(row_width=2)
     
-    # Fila 1: Catálogo (botón principal ancho) y Perfil
     keyboard.add(
-        InlineKeyboardButton("📂 Catálogo", callback_data="ver_catalogo"),
+        InlineKeyboardButton("📂 Catálogo SOCIOS", callback_data="ver_catalogo"),
         InlineKeyboardButton("👤 Mi Perfil", callback_data="mi_perfil")
     )
-    
-    # Fila 2: Recargar Saldo y Canjear Cupón (Diseño de dos columnas simétrico)
     keyboard.add(
-        InlineKeyboardButton("💳 Recargar", callback_data="recargar_saldo"),
-        InlineKeyboardButton("🎟️ Canjear", callback_data="canjear_cupon")
+        InlineKeyboardButton("💳 Recargar Saldo", callback_data="recargar_saldo"),
+        InlineKeyboardButton("🎟️ Canjear Cupón", callback_data="canjear_cupon")
     )
-    
-    # Fila 3: Membresía Premium (Destacado a lo ancho)
     keyboard.add(
-        InlineKeyboardButton("💎 Adquirir Premium (10% OFF)", callback_data="comprar_premium")
+        InlineKeyboardButton("💎 Adquirir Premium ( 10% OFF 💰 )", callback_data="comprar_premium")
     )
 
-    # Paneles de administración dinámicos si es Owner o Admin
     if is_owner:
         keyboard.add(InlineKeyboardButton("👑 PANEL DE OWNER", callback_data="panel_owner"))
     elif is_admin:
         keyboard.add(InlineKeyboardButton("⚙️ PANEL DE ADMIN", callback_data="panel_admin"))
 
-    # Fila final de enlaces externos (Soporte y Canal en dos columnas limpias)
     keyboard.add(
-        InlineKeyboardButton("👨‍💻 Soporte", url="https://t.me/StoreFixersXiters"),
-        InlineKeyboardButton("📢 Canal", url="https://t.me/StoreFixersXiters")
+        InlineKeyboardButton("👨‍💻 Soporte Directo", url="https://t.me/StoreFixersXiters"),
+        InlineKeyboardButton("📢 Canal Oficial", url="https://t.me/StoreFixersXiters")
     )
     
     return keyboard
@@ -89,7 +81,7 @@ def texto_principal(user_id, first_name):
         f"🆔 **ID de Cuenta:** `{user_id}`\n"
         f"💰 **Saldo Disponible:** `${saldo:.2f} USD`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Selecciona una de las opciones del menú:"
+        f"¿Qué vamos a hacer hoy, {first_name}? Elige una opción:"
     )
 
 # Comando /start
@@ -115,9 +107,12 @@ async def cmd_start(message: types.Message):
             parse_mode="Markdown"
         )
 
-# Manejador de navegación con callbacks fluidos
+# --- MANEJADOR DE CLICS INSTÁNTANEOS ---
 @dp.callback_query_handler(lambda c: True)
 async def process_callback(callback_query: types.CallbackQuery):
+    # Respuesta ultra rápida para quitar el estado de carga del botón al instante
+    await callback_query.answer()
+
     data = callback_query.data
     user_id = callback_query.from_user.id
     first_name = callback_query.from_user.first_name
@@ -126,15 +121,11 @@ async def process_callback(callback_query: types.CallbackQuery):
 
     try:
         if data == "inicio":
-            try:
-                await bot.edit_message_caption(
-                    chat_id=chat_id, message_id=message_id,
-                    caption=texto_principal(user_id, first_name),
-                    reply_markup=main_menu(user_id), parse_mode="Markdown"
-                )
-            except Exception:
-                await bot.delete_message(chat_id, message_id)
-                await bot.send_photo(chat_id, photo=BANNER_IMAGE_URL, caption=texto_principal(user_id, first_name), reply_markup=main_menu(user_id), parse_mode="Markdown")
+            await bot.edit_message_caption(
+                chat_id=chat_id, message_id=message_id,
+                caption=texto_principal(user_id, first_name),
+                reply_markup=main_menu(user_id), parse_mode="Markdown"
+            )
 
         elif data == "ver_catalogo":
             keyboard = InlineKeyboardMarkup(row_width=2).add(
@@ -186,7 +177,6 @@ async def process_callback(callback_query: types.CallbackQuery):
         # --- PANEL DE OWNER ---
         elif data == "panel_owner":
             if user_id != OWNER_ID:
-                await callback_query.answer("❌ No tienes acceso.", show_alert=True)
                 return
             keyboard = InlineKeyboardMarkup(row_width=2).add(
                 InlineKeyboardButton("💰 Dar Créditos", callback_data="owner_dar_creditos"),
@@ -221,7 +211,6 @@ async def process_callback(callback_query: types.CallbackQuery):
         # --- PANEL DE ADMIN ---
         elif data == "panel_admin":
             if user_id not in ADMINS_IDS and user_id != OWNER_ID:
-                await callback_query.answer("❌ Sin permisos.", show_alert=True)
                 return
             keyboard = InlineKeyboardMarkup(row_width=2).add(
                 InlineKeyboardButton("💰 Dar Créditos", callback_data="admin_dar_creditos"),
@@ -239,7 +228,7 @@ async def process_callback(callback_query: types.CallbackQuery):
             await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="💸 Usa en el chat:\n`/quitarcreditos ID MONTO`", reply_markup=keyboard, parse_mode="Markdown")
 
     except Exception as e:
-        logger.error(f"Error en callback: {e}")
+        logger.error(f"Error en callback instantáneo: {e}")
 
 # Comando para difusión de promos
 @dp.message_handler(commands=["promo"])
@@ -333,6 +322,6 @@ async def cmd_quitarrango(message: types.Message):
 
 if __name__ == "__main__":
     from aiogram import executor
-    logger.info("Iniciando bot con diseño profesional...")
+    logger.info("Iniciando bot con interacción ultra rápida...")
     executor.start_polling(dp, skip_updates=True)
-                                     
+                                                                       
