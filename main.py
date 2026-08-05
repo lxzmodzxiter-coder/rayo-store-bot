@@ -5,8 +5,9 @@ import time
 import traceback
 from threading import Thread
 from flask import Flask
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
 
 # Configuración de logs profesionales
 logging.basicConfig(
@@ -29,17 +30,17 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 # ---------------------------------------------------
 
-# Credenciales del Bot
-TOKEN = "8799688315:AAH3afiU9b8RdEuWtCtj3ooBTopEgaJMFFg"
-OWNER_ID = 7939709543
+# Credenciales y Configuración Segura por Variables de Entorno
+TOKEN = os.getenv("BOT_TOKEN", "8799688315:AAH3afiU9b8RdEuWtCtj3ooBTopEgaJMFFg")
+OWNER_ID = int(os.getenv("OWNER_ID", "7939709543"))
 
 bot = Bot(token=TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 BANNER_PRINCIPAL = "https://i.ibb.co/3m20gX28/51614.jpg"
 
 # ==========================================
-#      BASE DE DATABASE (SQLite Integrada)
+#      BASE DE DATOS (SQLite Integrada)
 # ==========================================
 def init_db():
     conn = sqlite3.connect("rayofix.db")
@@ -53,7 +54,8 @@ def init_db():
             saldo REAL DEFAULT 0.0,
             rango TEXT DEFAULT 'Cliente',
             is_premium INTEGER DEFAULT 0,
-            fecha_registro TEXT
+            fecha_registro TEXT,
+            invitador INTEGER DEFAULT 0
         )
     """)
     
@@ -73,13 +75,23 @@ def init_db():
             user_id INTEGER PRIMARY KEY
         )
     """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS compras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            producto TEXT,
+            precio REAL,
+            fecha TEXT
+        )
+    """)
     
     conn.commit()
     conn.close()
 
 init_db()
 
-def es_admin_o_owner(user_id):
+def es_admin_o_owner(user_id: int) -> bool:
     if user_id == OWNER_ID:
         return True
     conn = sqlite3.connect("rayofix.db")
@@ -92,36 +104,37 @@ def es_admin_o_owner(user_id):
 # ==========================================
 #         MENÚS Y ESTÉTICA (UI/UX)
 # ==========================================
-def menu_principal(user_id):
+def menu_principal(user_id: int) -> InlineKeyboardMarkup:
     is_owner = (user_id == OWNER_ID)
     is_admin = es_admin_o_owner(user_id)
 
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("🛍️ Catálogo", callback_data="ver_catalogo"),
-        InlineKeyboardButton("👤 Perfil", callback_data="mi_perfil")
-    )
-    keyboard.add(
-        InlineKeyboardButton("💳 Recargar", callback_data="recargar_saldo"),
-        InlineKeyboardButton("🎟️ Cupones", callback_data="canjear_cupon")
-    )
-    keyboard.add(
-        InlineKeyboardButton("💎 Premium", callback_data="comprar_premium"),
-        InlineKeyboardButton("📦 Compras", callback_data="mis_compras")
-    )
-    keyboard.add(
-        InlineKeyboardButton("📞 Soporte", url="https://t.me/StoreFixersXiters"),
-        InlineKeyboardButton("📢 Canal", url="https://t.me/StoreFixersXiters")
-    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🛍️ Catálogo", callback_data="ver_catalogo"),
+            InlineKeyboardButton(text="👤 Perfil", callback_data="mi_perfil")
+        ],
+        [
+            InlineKeyboardButton(text="💳 Recargar", callback_data="recargar_saldo"),
+            InlineKeyboardButton(text="🎟️ Cupones", callback_data="canjear_cupon")
+        ],
+        [
+            InlineKeyboardButton(text="💎 Premium", callback_data="comprar_premium"),
+            InlineKeyboardButton(text="📦 Compras", callback_data="mis_compras")
+        ],
+        [
+            InlineKeyboardButton(text="📞 Soporte", url="https://t.me/StoreFixersXiters"),
+            InlineKeyboardButton(text="📢 Canal", url="https://t.me/StoreFixersXiters")
+        ]
+    ])
 
     if is_owner:
-        keyboard.add(InlineKeyboardButton("👑 Panel Owner", callback_data="panel_owner"))
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text="👑 Panel Owner", callback_data="panel_owner")])
     elif is_admin:
-        keyboard.add(InlineKeyboardButton("⚙️ Panel Admin", callback_data="panel_admin"))
+        keyboard.inline_keyboard.append([InlineKeyboardButton(text="⚙️ Panel Admin", callback_data="panel_admin")])
     
     return keyboard
 
-def texto_principal(user_id, first_name):
+def texto_principal(user_id: int, first_name: str) -> str:
     conn = sqlite3.connect("rayofix.db")
     cursor = conn.cursor()
     cursor.execute("SELECT saldo, rango, is_premium FROM users WHERE user_id = ?", (user_id,))
@@ -146,12 +159,8 @@ def texto_principal(user_id, first_name):
 # ==========================================
 #     FUNCIÓN SEGURA DE EDICIÓN (ANTI-ERROR)
 # ==========================================
-async def actualizar_pantalla(callback_query: types.CallbackQuery, nuevo_texto: str, reply_markup: InlineKeyboardMarkup):
-    """
-    Detecta automáticamente si el mensaje contiene una foto o es solo texto,
-    aplicando el método correcto para evitar bloqueos y el error de 'no caption'.
-    """
-    message = callback_query.message
+async def actualizar_pantalla(callback: CallbackQuery, nuevo_texto: str, reply_markup: InlineKeyboardMarkup):
+    message = callback.message
     try:
         if message.photo:
             await bot.edit_message_caption(
@@ -169,18 +178,19 @@ async def actualizar_pantalla(callback_query: types.CallbackQuery, nuevo_texto: 
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
-    except Exception as e:
-        # Si el mensaje es idéntico, Telegram lanza 'message is not modified', lo ignoramos con seguridad
+    except TelegramBadRequest as e:
         if "message is not modified" in str(e):
             return
-        logger.error(f"Error al actualizar pantalla: {e}")
+        logger.error(f"Error de Telegram al actualizar pantalla: {e}")
+    except Exception as e:
+        logger.error(f"Error general al actualizar pantalla: {e}")
         traceback.print_exc()
 
 # ==========================================
 #              COMANDO /START
 # ==========================================
-@dp.message_handler(commands=["start"])
-async def cmd_start(message: types.Message):
+@dp.message(F.text.startswith("/start"))
+async def cmd_start(message: Message):
     user_id = message.from_user.id
     first_name = message.from_user.first_name
     username = message.from_user.username or "Sin username"
@@ -213,43 +223,50 @@ async def cmd_start(message: types.Message):
 # ==========================================
 #           NAVEGACIÓN INTERACTIVA
 # ==========================================
-@dp.callback_query_handler(lambda c: True)
-async def process_callback(callback_query: types.CallbackQuery):
-    await callback_query.answer()
+@dp.callback_query()
+async def process_callback(callback: CallbackQuery):
+    await callback.answer()
 
-    data = callback_query.data
-    user_id = callback_query.from_user.id
-    first_name = callback_query.from_user.first_name
+    data = callback.data
+    user_id = callback.from_user.id
+    first_name = callback.from_user.first_name
 
     try:
         if data == "inicio":
-            await actualizar_pantalla(callback_query, texto_principal(user_id, first_name), menu_principal(user_id))
+            await actualizar_pantalla(callback, texto_principal(user_id, first_name), menu_principal(user_id))
 
         elif data == "ver_catalogo":
-            keyboard = InlineKeyboardMarkup(row_width=1)
-            keyboard.add(
-                InlineKeyboardButton("📱 Android", callback_data="cat_Android"),
-                InlineKeyboardButton("🍏 iPhone / iOS", callback_data="cat_iOS"),
-                InlineKeyboardButton("🖥️ Windows / PC", callback_data="cat_PC"),
-                InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio")
-            )
-            await actualizar_pantalla(callback_query, "📂 **CATÁLOGO DE PRODUCTOS**\n\nElige una categoría:", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📱 Android", callback_data="cat_Android")],
+                [InlineKeyboardButton(text="🍎 iPhone / iOS", callback_data="cat_iOS")],
+                [InlineKeyboardButton(text="🖥️ Windows / PC", callback_data="cat_PC")],
+                [InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]
+            ])
+            await actualizar_pantalla(callback, "📂 **CATÁLOGO DE PRODUCTOS**\n\nElige una categoría:", keyboard)
 
         elif data.startswith("cat_"):
             categoria = data.split("_")[1]
+            if categoria == "PC":
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Volver al Catálogo", callback_data="ver_catalogo")]
+                ])
+                await actualizar_pantalla(callback, "🖥️ **WINDOWS / PC**\n\n🚧 Próximamente...", keyboard)
+                return
+
             conn = sqlite3.connect("rayofix.db")
             cursor = conn.cursor()
             cursor.execute("SELECT id, nombre, precio FROM productos WHERE categoria = ?", (categoria,))
             prods = cursor.fetchall()
             conn.close()
 
-            keyboard = InlineKeyboardMarkup(row_width=1)
+            keyboard = []
             for p_id, p_nombre, p_precio in prods:
-                keyboard.add(InlineKeyboardButton(f"📦 {p_nombre} - ${p_precio:.2f}", callback_data=f"ver_prod_{p_id}"))
-            keyboard.add(InlineKeyboardButton("⬅️ Volver al Catálogo", callback_data="ver_catalogo"))
+                keyboard.append([InlineKeyboardButton(text=f"📦 {p_nombre} - ${p_precio:.2f}", callback_data=f"ver_prod_{p_id}")])
+            keyboard.append([InlineKeyboardButton(text="⬅️ Volver al Catálogo", callback_data="ver_catalogo")])
 
+            markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
             texto_cat = f"📂 **CATEGORÍA: {categoria.upper()}**\n\nSelecciona un producto:" if prods else f"📂 **CATEGORÍA: {categoria.upper()}**\n\n⚠️ No hay productos disponibles por el momento."
-            await actualizar_pantalla(callback_query, texto_cat, keyboard)
+            await actualizar_pantalla(callback, texto_cat, markup)
 
         elif data.startswith("ver_prod_"):
             p_id = int(data.split("_")[2])
@@ -261,13 +278,12 @@ async def process_callback(callback_query: types.CallbackQuery):
 
             if prod:
                 nombre, precio, descripcion, stock = prod
-                keyboard = InlineKeyboardMarkup(row_width=1)
-                keyboard.add(
-                    InlineKeyboardButton(f"🛒 Comprar (${precio:.2f})", callback_data=f"comprar_{p_id}"),
-                    InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")
-                )
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=f"🛒 Comprar (${precio:.2f})", callback_data=f"comprar_{p_id}")],
+                    [InlineKeyboardButton(text="⬅️ Volver", callback_data="ver_catalogo")]
+                ])
                 caption = f"📦 **{nombre}**\n\n📝 **Descripción:** {descripcion}\n💰 **Precio:** `${precio:.2f} USD`\n📦 **Stock:** `{stock}` unidades"
-                await actualizar_pantalla(callback_query, caption, keyboard)
+                await actualizar_pantalla(callback, caption, keyboard)
 
         elif data.startswith("comprar_"):
             p_id = int(data.split("_")[1])
@@ -283,19 +299,21 @@ async def process_callback(callback_query: types.CallbackQuery):
             if prod:
                 nombre, precio, stock = prod
                 if stock <= 0:
-                    await bot.answer_callback_query(callback_query.id, "❌ Producto sin stock.", show_alert=True)
+                    await callback.answer("❌ Producto sin stock.", show_alert=True)
                 elif user_saldo < precio:
-                    await bot.answer_callback_query(callback_query.id, "❌ Saldo insuficiente. Recarga tu cuenta.", show_alert=True)
+                    await callback.answer("❌ Saldo insuficiente. Recarga tu cuenta.", show_alert=True)
                 else:
                     nuevo_saldo = user_saldo - precio
                     cursor.execute("UPDATE users SET saldo = ? WHERE user_id = ?", (nuevo_saldo, user_id))
                     cursor.execute("UPDATE productos SET stock = stock - 1 WHERE id = ?", (p_id,))
+                    cursor.execute("INSERT INTO compras (user_id, producto, precio, fecha) VALUES (?, ?, ?, ?)", 
+                                   (user_id, nombre, precio, time.strftime("%Y-%m-%d %H:%M:%S")))
                     conn.commit()
-                    await bot.answer_callback_query(callback_query.id, "✅ ¡Compra realizada con éxito!", show_alert=True)
+                    await callback.answer("✅ ¡Compra realizada con éxito!", show_alert=True)
             conn.close()
             
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
-            await actualizar_pantalla(callback_query, "🎉 ¡Gracias por tu compra! Revisa los detalles en tu historial.", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]])
+            await actualizar_pantalla(callback, "🎉 ¡Gracias por tu compra! Revisa los detalles en tu historial.", keyboard)
 
         elif data == "mi_perfil":
             conn = sqlite3.connect("rayofix.db")
@@ -309,7 +327,7 @@ async def process_callback(callback_query: types.CallbackQuery):
             prem = "Sí" if (row and row[2]==1) else "No"
             f_reg = row[3] if row else "N/D"
 
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]])
             texto_perfil = (
                 f"👤 **MI PERFIL - RAYO FIX**\n\n"
                 f"• **Nombre:** {first_name}\n"
@@ -319,10 +337,10 @@ async def process_callback(callback_query: types.CallbackQuery):
                 f"• **Premium:** {prem}\n"
                 f"• **Registro:** {f_reg}"
             )
-            await actualizar_pantalla(callback_query, texto_perfil, keyboard)
+            await actualizar_pantalla(callback, texto_perfil, keyboard)
 
         elif data == "recargar_saldo":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]])
             texto_recarga = (
                 "💳 **MÉTODOS DE PAGO / RECARGA**\n\n"
                 "Puedes recargar mediante:\n"
@@ -330,36 +348,53 @@ async def process_callback(callback_query: types.CallbackQuery):
                 "🌐 **Binance Pay / USDT (TRC20)**\n\n"
                 "Envía el comprobante directamente a nuestro soporte con tu ID de cuenta."
             )
-            await actualizar_pantalla(callback_query, texto_recarga, keyboard)
+            await actualizar_pantalla(callback, texto_recarga, keyboard)
 
         elif data == "canjear_cupon":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
-            await actualizar_pantalla(callback_query, "🎟️ **CANJEAR CUPÓN**\n\nEnvía tu código promocional al chat de soporte para aplicarlo.", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]])
+            await actualizar_pantalla(callback, "🎟️ **CANJEAR CUPÓN**\n\nEnvía tu código promocional al chat de soporte para aplicarlo.", keyboard)
 
         elif data == "comprar_premium":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
-            await actualizar_pantalla(callback_query, "💎 **MEMBRESÍA PREMIUM (10% OFF)**\n\nObtén beneficios exclusivos comunicándote con soporte.", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]])
+            await actualizar_pantalla(callback, "💎 **MEMBRESÍA PREMIUM (10% OFF)**\n\nObtén beneficios exclusivos comunicándote con soporte.", keyboard)
 
         elif data == "mis_compras":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
-            await actualizar_pantalla(callback_query, "📦 **HISTORIAL DE COMPRAS**\n\nNo registras compras recientes.", keyboard)
+            conn = sqlite3.connect("rayofix.db")
+            cursor = conn.cursor()
+            cursor.execute("SELECT producto, precio, fecha FROM compras WHERE user_id = ?", (user_id,))
+            compras = cursor.fetchall()
+            conn.close()
+
+            texto_compras = "📦 **HISTORIAL DE COMPRAS**\n\n"
+            if compras:
+                for prod, precio, fecha in compras:
+                    texto_compras += f"• **{prod}** - `${precio:.2f}` ({fecha})\n"
+            else:
+                texto_compras += "No registras compras recientes."
+
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]])
+            await actualizar_pantalla(callback, texto_compras, keyboard)
 
         # --- PANEL DE OWNER Y ADMIN ---
         elif data == "panel_owner":
             if user_id != OWNER_ID:
                 return
-            keyboard = InlineKeyboardMarkup(row_width=2).add(
-                InlineKeyboardButton("➕ Agregar Producto", callback_data="owner_add_prod"),
-                InlineKeyboardButton("🗑️ Eliminar Producto", callback_data="owner_del_prod"),
-                InlineKeyboardButton("💰 Dar Saldo", callback_data="owner_dar_saldo"),
-                InlineKeyboardButton("🛡️ Dar Admin", callback_data="owner_dar_admin"),
-                InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio")
-            )
-            await actualizar_pantalla(callback_query, "👑 **PANEL DE OWNER**\n\nGestión general del sistema:", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="➕ Agregar Producto", callback_data="owner_add_prod"),
+                    InlineKeyboardButton(text="🗑️ Eliminar Producto", callback_data="owner_del_prod")
+                ],
+                [
+                    InlineKeyboardButton(text="💰 Dar Saldo", callback_data="owner_dar_saldo"),
+                    InlineKeyboardButton(text="🛡️ Dar Admin", callback_data="owner_dar_admin")
+                ],
+                [InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]
+            ])
+            await actualizar_pantalla(callback, "👑 **PANEL DE OWNER**\n\nGestión general del sistema:", keyboard)
 
         elif data == "owner_add_prod":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
-            await actualizar_pantalla(callback_query, "➕ **AGREGAR PRODUCTO**\n\nUsa el comando en el chat:\n`/addprod Categoria Nombre Precio Stock Descripcion`", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Panel", callback_data="panel_owner")]])
+            await actualizar_pantalla(callback, "➕ **AGREGAR PRODUCTO**\n\nUsa el comando en el chat:\n`/addprod Categoria Nombre Precio Stock Descripcion`", keyboard)
 
         elif data == "owner_del_prod":
             conn = sqlite3.connect("rayofix.db")
@@ -368,11 +403,13 @@ async def process_callback(callback_query: types.CallbackQuery):
             prods = cursor.fetchall()
             conn.close()
 
-            keyboard = InlineKeyboardMarkup(row_width=1)
+            keyboard = []
             for p_id, p_nombre in prods:
-                keyboard.add(InlineKeyboardButton(f"❌ Eliminar: {p_nombre}", callback_data=f"del_p_{p_id}"))
-            keyboard.add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
-            await actualizar_pantalla(callback_query, "🗑️ **ELIMINAR PRODUCTOS**\n\nSelecciona el producto a retirar:", keyboard)
+                keyboard.append([InlineKeyboardButton(text=f"❌ Eliminar: {p_nombre}", callback_data=f"del_p_{p_id}")])
+            keyboard.append([InlineKeyboardButton(text="⬅️ Volver al Panel", callback_data="panel_owner")])
+
+            markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+            await actualizar_pantalla(callback, "🗑️ **ELIMINAR PRODUCTOS**\n\nSelecciona el producto a retirar:", markup)
 
         elif data.startswith("del_p_"):
             p_id = int(data.split("_")[2])
@@ -381,27 +418,27 @@ async def process_callback(callback_query: types.CallbackQuery):
             cursor.execute("DELETE FROM productos WHERE id = ?", (p_id,))
             conn.commit()
             conn.close()
-            await bot.answer_callback_query(callback_query.id, "✅ Producto eliminado con éxito.", show_alert=True)
+            await callback.answer("✅ Producto eliminado con éxito.", show_alert=True)
             
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
-            await actualizar_pantalla(callback_query, "✅ Producto eliminado correctamente.", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Panel", callback_data="panel_owner")]])
+            await actualizar_pantalla(callback, "✅ Producto eliminado correctamente.", keyboard)
 
         elif data == "owner_dar_saldo":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
-            await actualizar_pantalla(callback_query, "💰 **DAR SALDO**\n\nUsa en el chat:\n`/darsaldo ID_USUARIO MONTO`", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Panel", callback_data="panel_owner")]])
+            await actualizar_pantalla(callback, "💰 **DAR SALDO**\n\nUsa en el chat:\n`/darsaldo ID_USUARIO MONTO`", keyboard)
 
         elif data == "owner_dar_admin":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
-            await actualizar_pantalla(callback_query, "🛡️ **DAR ADMIN**\n\nUsa en el chat:\n`/daradmin ID_USUARIO`", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Volver al Panel", callback_data="panel_owner")]])
+            await actualizar_pantalla(callback, "🛡️ **DAR ADMIN**\n\nUsa en el chat:\n`/daradmin ID_USUARIO`", keyboard)
 
         elif data == "panel_admin":
             if not es_admin_o_owner(user_id):
                 return
-            keyboard = InlineKeyboardMarkup().add(
-                InlineKeyboardButton("💰 Dar Saldo", callback_data="owner_dar_saldo"),
-                InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio")
-            )
-            await actualizar_pantalla(callback_query, "⚙️ **PANEL DE ADMINISTRADOR**", keyboard)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💰 Dar Saldo", callback_data="owner_dar_saldo")],
+                [InlineKeyboardButton(text="⬅️ Volver al Menú", callback_data="inicio")]
+            ])
+            await actualizar_pantalla(callback, "⚙️ **PANEL DE ADMINISTRADOR**", keyboard)
 
     except Exception as e:
         logger.error(f"Error crítico en callback general: {e}")
@@ -410,8 +447,8 @@ async def process_callback(callback_query: types.CallbackQuery):
 # ==========================================
 #          COMANDOS DE GESTIÓN (ADMIN)
 # ==========================================
-@dp.message_handler(commands=["addprod"])
-async def cmd_addprod(message: types.Message):
+@dp.message(F.text.startswith("/addprod"))
+async def cmd_addprod(message: Message):
     if message.from_user.id != OWNER_ID:
         return
     try:
@@ -434,8 +471,8 @@ async def cmd_addprod(message: types.Message):
     except Exception:
         await message.reply("❌ Formato incorrecto. Uso:\n`/addprod Android DripMod 5.00 10 APK Modificado`", parse_mode="Markdown")
 
-@dp.message_handler(commands=["darsaldo"])
-async def cmd_darsaldo(message: types.Message):
+@dp.message(F.text.startswith("/darsaldo"))
+async def cmd_darsaldo(message: Message):
     if not es_admin_o_owner(message.from_user.id):
         return
     try:
@@ -452,24 +489,8 @@ async def cmd_darsaldo(message: types.Message):
     except Exception:
         await message.reply("❌ Uso incorrecto. Ejemplo: `/darsaldo 123456789 10`", parse_mode="Markdown")
 
-@dp.message_handler(commands=["daradmin"])
-async def cmd_daradmin(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return
-    try:
-        target_id = int(message.text.split()[1])
-        conn = sqlite3.connect("rayofix.db")
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (target_id,))
-        cursor.execute("UPDATE users SET rango = 'Administrador' WHERE user_id = ?", (target_id,))
-        conn.commit()
-        conn.close()
-                                await message.reply(f"✅ Se agregaron **${monto:.2f} USD** al usuario `{target_id}`.", parse_mode="Markdown")
-    except Exception:
-        await message.reply("❌ Uso incorrecto. Ejemplo: `/darsaldo 123456789 10`", parse_mode="Markdown")
-
-@dp.message_handler(commands=["daradmin"])
-async def cmd_daradmin(message: types.Message):
+@dp.message(F.text.startswith("/daradmin"))
+async def cmd_daradmin(message: Message):
     if message.from_user.id != OWNER_ID:
         return
     try:
@@ -487,12 +508,16 @@ async def cmd_daradmin(message: types.Message):
 # ==========================================
 #              INICIO DEL BOT
 # ==========================================
+async def main():
+    logger.info("Iniciando Rayo Fix Store Bot con aiogram 3.x...")
+    await dp.start_polling(bot, skip_updates=True)
+
 if __name__ == "__main__":
-    from aiogram import executor
-    logger.info("Iniciando Rayo Fix Store Bot de forma segura...")
+    import asyncio
     while True:
         try:
-            executor.start_polling(dp, skip_updates=True)
+            asyncio.run(main())
         except Exception as e:
-            logger.error(f"Error de polling: {e}. Reiniciando en 15 segundos...")
+            logger.error(f"Error crítico en polling: {e}. Reiniciando en 15 segundos...")
             time.sleep(15)
+    
