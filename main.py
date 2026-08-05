@@ -464,4 +464,35 @@ async def cmd_daradmin(message: types.Message):
         cursor.execute("UPDATE users SET rango = 'Administrador' WHERE user_id = ?", (target_id,))
         conn.commit()
         conn.close()
-        await message.reply(f"✅ Usuario `{target_i
+                await message.reply(f"✅ Se agregaron **${monto:.2f} USD** al usuario `{target_id}`.", parse_mode="Markdown")
+    except Exception:
+        await message.reply("❌ Uso incorrecto. Ejemplo: `/darsaldo 123456789 10`", parse_mode="Markdown")
+
+@dp.message_handler(commands=["daradmin"])
+async def cmd_daradmin(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    try:
+        target_id = int(message.text.split()[1])
+        conn = sqlite3.connect("rayofix.db")
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR IGNORE INTO admins (user_id) VALUES (?)", (target_id,))
+        cursor.execute("UPDATE users SET rango = 'Administrador' WHERE user_id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+        await message.reply(f"✅ Usuario `{target_id}` ascendido a Administrador.", parse_mode="Markdown")
+    except Exception:
+        await message.reply("❌ Uso incorrecto. Ejemplo: `/daradmin 123456789`", parse_mode="Markdown")
+
+# ==========================================
+#              INICIO DEL BOT
+# ==========================================
+if __name__ == "__main__":
+    from aiogram import executor
+    logger.info("Iniciando Rayo Fix Store Bot de forma segura...")
+    while True:
+        try:
+            executor.start_polling(dp, skip_updates=True)
+        except Exception as e:
+            logger.error(f"Error de polling: {e}. Reiniciando en 15 segundos...")
+            time.sleep(15)
