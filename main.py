@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from threading import Thread
 from flask import Flask
 from aiogram import Bot, Dispatcher, types
@@ -22,9 +23,13 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 # -------------------------------------------------------------
 
-# Nuevo Token oficial de tu bot actualizado
+# Token oficial de tu bot actualizado
 TOKEN = "8717156909:AAH7zXtwD7gKcvdFPI62VlTyI0AN61MhAzc"
 OWNER_ID = 7939709543
+
+# Esperar 5 segundos antes de inicializar para evitar bloqueos por reintentos rápidos
+print("Esperando 5 segundos antes de conectar con Telegram...")
+time.sleep(5)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
@@ -282,4 +287,4 @@ if __name__ == "__main__":
     from aiogram import executor
     print("Iniciando bot con aiogram...")
     executor.start_polling(dp, skip_updates=True)
-                
+            
