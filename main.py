@@ -6,8 +6,9 @@ from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Configuración básica de logs
+# Configuración detallada de logs para ver qué pasa en la consola de Render
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # --- MINI SERVIDOR WEB PARA CUMPLIR CON EL PUERTO DE RENDER ---
 web_app = Flask(__name__)
@@ -27,8 +28,7 @@ Thread(target=run_web, daemon=True).start()
 TOKEN = "8717156909:AAH7zXtwD7gKcvdFPI62VlTyI0AN61MhAzc"
 OWNER_ID = 7939709543
 
-# Esperar 5 segundos antes de inicializar para evitar bloqueos por reintentos rápidos
-print("Esperando 5 segundos antes de conectar con Telegram...")
+logger.info("Esperando 5 segundos antes de inicializar el bot...")
 time.sleep(5)
 
 bot = Bot(token=TOKEN)
@@ -51,6 +51,7 @@ def main_menu():
 # Comando /start y respuesta automática a cualquier texto que escribas
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
+    logger.info(f"Comando /start recibido de {message.from_user.id}")
     await message.answer(
         "👋 ¡Bienvenido a **Rayo Store**!\n\nSelecciona una de las opciones del menú:",
         reply_markup=main_menu(),
@@ -59,6 +60,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message_handler()
 async def echo_all_messages(message: types.Message):
+    logger.info(f"Mensaje de texto recibido de {message.from_user.id}: {message.text}")
     await message.answer(
         f"📩 Recibí tu mensaje: *{message.text}*\n\nSelecciona una opción del menú:",
         reply_markup=main_menu(),
@@ -216,7 +218,7 @@ async def process_callback(callback_query: types.CallbackQuery):
             await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
 
     except Exception as e:
-        print(f"Error en callback: {e}")
+        logger.error(f"Error en callback: {e}")
 
 # Comandos de administración
 @dp.message_handler(commands=["panel"])
@@ -285,6 +287,6 @@ async def cmd_miscreditos(message: types.Message):
 
 if __name__ == "__main__":
     from aiogram import executor
-    print("Iniciando bot con aiogram...")
+    logger.info("Iniciando polling del bot...")
     executor.start_polling(dp, skip_updates=True)
             
