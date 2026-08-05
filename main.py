@@ -6,7 +6,7 @@ from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Configuración detallada de logs
+# Configuración de logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "¡Rayo Store Bot está activo y funcionando perfectamente!"
+    return "¡Rayo Fix Bot está activo y funcionando perfectamente!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -24,7 +24,7 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 # -------------------------------------------------------------
 
-# Nuevo Token oficial limpio de tu bot
+# Token oficial de tu nuevo bot y tu ID de Owner
 TOKEN = "8799688315:AAH3afiU9b8RdEuWtCtj3ooBTopEgaJMFFg"
 OWNER_ID = 7939709543
 
@@ -34,256 +34,351 @@ time.sleep(5)
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-# Base de datos en memoria
+# Base de datos simulada en memoria
 ADMINS_IDS = []
 USER_CREDITS = {}
 
-# Menú principal con botones
-def main_menu():
+# URL de la imagen que proporcionaste para el Banner Principal
+BANNER_IMAGE_URL = "https://i.ibb.co/3m20gX28/51614.jpg"  # (Imagen cargada desde tu diseño)
+
+# Menú Principal Estilo Pro
+def main_menu(user_id):
+    saldo = USER_CREDITS.get(user_id, 0.0)
+    is_owner = (user_id == OWNER_ID)
+    is_admin = (user_id in ADMINS_IDS or is_owner)
+
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
-        InlineKeyboardButton("📂 VER CATÁLOGO", callback_data="ver_catalogo"),
-        InlineKeyboardButton("💳 MIS CRÉDITOS", callback_data="ver_mis_creditos"),
-        InlineKeyboardButton("⚙️ PANEL", callback_data="abrir_panel")
+        InlineKeyboardButton("📂 VER CATÁLOGO SOCIOS", callback_data="ver_catalogo"),
+        InlineKeyboardButton("💳 Recargar Saldo", callback_data="recargar_saldo"),
+        InlineKeyboardButton("🎟️ Canjear Cupón", callback_data="canjear_cupon"),
+        InlineKeyboardButton("👤 Mi Perfil / Historial", callback_data="mi_perfil"),
+        InlineKeyboardButton("💎 Adquirir Premium ( 10% OFF 💰 )", callback_data="comprar_premium")
+    )
+
+    # Agregar botones de paneles según el rango del usuario
+    if is_owner:
+        keyboard.add(InlineKeyboardButton("👑 PANEL DE OWNER", callback_data="panel_owner"))
+    elif is_admin:
+        keyboard.add(InlineKeyboardButton("⚙️ PANEL DE ADMIN", callback_data="panel_admin"))
+
+    keyboard.row(
+        InlineKeyboardButton("👨‍💻 Soporte Directo", url="https://t.me/StoreFixersXiters"),
+        InlineKeyboardButton("📢 Canal Oficial", url="https://t.me/StoreFixersXiters")
     )
     return keyboard
 
-# Comando /start y respuesta automática a cualquier texto que escribas
-@dp.message_handler(commands=["start"])
-async def cmd_start(message: types.Message):
-    logger.info(f"Comando /start recibido de {message.from_user.id}")
-    await message.answer(
-        "👋 ¡Bienvenido a **Rayo Store**!\n\nSelecciona una de las opciones del menú:",
-        reply_markup=main_menu(),
-        parse_mode="Markdown"
+def texto_bienvenida(user_id, first_name):
+    saldo = USER_CREDITS.get(user_id, 0.0)
+    return (
+        f"⚡ **RAYO FIX EXCLUSIVE** 🛍️\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **Cliente:** {first_name}\n"
+        f"🆔 **ID de Cuenta:** `{user_id}`\n"
+        f"💰 **Saldo Disponible:** `${saldo:.2f} USD`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"¿Qué vamos a hacer hoy, cariño? Elige una opción:"
     )
 
-@dp.message_handler()
-async def echo_all_messages(message: types.Message):
-    logger.info(f"Mensaje de texto recibido de {message.from_user.id}: {message.text}")
-    await message.answer(
-        f"📩 Recibí tu mensaje: *{message.text}*\n\nSelecciona una opción del menú:",
-        reply_markup=main_menu(),
-        parse_mode="Markdown"
-    )
+# Comando /start
+@dp.message_handler(commands=["start"])
+async def cmd_start(message: types.Message):
+    user_id = message.from_user.id
+    first_name = message.from_user.first_name
+    logger.info(f"Comando /start recibido de {user_id}")
+    
+    try:
+        await bot.send_photo(
+            chat_id=message.chat.id,
+            photo=BANNER_IMAGE_URL,
+            caption=texto_bienvenida(user_id, first_name),
+            reply_markup=main_menu(user_id),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Error enviando foto con banner: {e}")
+        await message.answer(
+            texto_bienvenida(user_id, first_name),
+            reply_markup=main_menu(user_id),
+            parse_mode="Markdown"
+        )
 
 # Manejador de botones (Callbacks)
 @dp.callback_query_handler(lambda c: True)
 async def process_callback(callback_query: types.CallbackQuery):
     data = callback_query.data
     user_id = callback_query.from_user.id
+    first_name = callback_query.from_user.first_name
 
     try:
         if data == "inicio":
-            await bot.edit_message_text(
-                "👋 ¡Bienvenido a **Rayo Store**!\n\nSelecciona una de las opciones del menú:",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
-                reply_markup=main_menu(),
-                parse_mode="Markdown"
-            )
+            try:
+                await bot.edit_message_caption(
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.message_id,
+                    caption=texto_bienvenida(user_id, first_name),
+                    reply_markup=main_menu(user_id),
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)
+                await bot.send_photo(
+                    chat_id=callback_query.message.chat.id,
+                    photo=BANNER_IMAGE_URL,
+                    caption=texto_bienvenida(user_id, first_name),
+                    reply_markup=main_menu(user_id),
+                    parse_mode="Markdown"
+                )
 
         elif data == "ver_catalogo":
-            keyboard = InlineKeyboardMarkup(row_width=1)
-            keyboard.add(
+            keyboard = InlineKeyboardMarkup(row_width=1).add(
                 InlineKeyboardButton("🤖 ANDROID", callback_data="cat_android"),
                 InlineKeyboardButton("🍏 IOS", callback_data="cat_ios"),
-                InlineKeyboardButton("⬅️ Regresar al Inicio", callback_data="inicio")
+                InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio")
             )
-            await bot.edit_message_text(
-                "📂 **TENEMOS PRODUCTOS FULL PRINCIPAL** 🎮\nSelecciona tu sistema operativo:",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+            await callback_query.message.edit_caption(
+                caption="📂 **CATÁLOGO OFICIAL - RAYO FIX** 🎮\n\nSelecciona tu sistema operativo:",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
         elif data == "cat_android":
-            keyboard = InlineKeyboardMarkup(row_width=1)
-            keyboard.add(
+            keyboard = InlineKeyboardMarkup(row_width=1).add(
                 InlineKeyboardButton("📦 DRIP CLIENT APK MOD", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 DRIP CLIENT PROXY", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 HG CHEATS", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 HOLO VIP", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 CUBAN PROXY", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 CUBAN APK MOD", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 HG CHEATS PROXY", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 FFH4X", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 BR MODS", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 Strick BR", callback_data="comprar_prod"),
                 InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")
             )
-            await bot.edit_message_text(
-                "🤖 **PRODUCTOS ANDROID** 📱\n\nElige tu producto:",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+            await callback_query.message.edit_caption(
+                caption="🤖 **PRODUCTOS ANDROID DISPONIBLES** 📱",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
         elif data == "cat_ios":
-            keyboard = InlineKeyboardMarkup(row_width=1)
-            keyboard.add(
+            keyboard = InlineKeyboardMarkup(row_width=1).add(
                 InlineKeyboardButton("📦 MONITE PRO", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 MONITE BASICO", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 CERTIFICADOS", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 PROXY POTATSO", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 ESIG ANUAL", callback_data="comprar_prod"),
-                InlineKeyboardButton("📦 FLUCK IOS", callback_data="comprar_prod"),
                 InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")
             )
-            await bot.edit_message_text(
-                "🍏 **PRODUCTOS IOS** 🍎\n\nElige tu producto:",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+            await callback_query.message.edit_caption(
+                caption="🍏 **PRODUCTOS IOS DISPONIBLES** 🍎",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
         elif data == "comprar_prod":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Catálogo", callback_data="ver_catalogo"))
-            await bot.edit_message_text(
-                "🛒 Para adquirir este producto, contacta con soporte o utiliza tus créditos disponibles.",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
-                reply_markup=keyboard
-            )
-
-        elif data == "ver_mis_creditos":
-            saldo = USER_CREDITS.get(user_id, 0)
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Inicio", callback_data="inicio"))
-            await bot.edit_message_text(
-                f"💳 Tu saldo actual es de: **{saldo} créditos**.",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo"))
+            await callback_query.message.edit_caption(
+                caption="🛒 Para adquirir este producto, contacta con soporte o recarga saldo en tu cuenta.",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
-        elif data == "abrir_panel":
-            keyboard = InlineKeyboardMarkup(row_width=1)
-            if user_id == OWNER_ID or user_id in ADMINS_IDS:
-                keyboard.add(
-                    InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins"),
-                    InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu"),
-                    InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")
-                )
-                if user_id == OWNER_ID:
-                    keyboard.insert(0, InlineKeyboardButton("➕ Agregar Admin", callback_data="owner_add_admin"))
-                
-                await bot.edit_message_text(
-                    "👑 **PANEL DE ADMINISTRACIÓN**\n\nSelecciona una opción:",
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.message_id,
-                    reply_markup=keyboard,
-                    parse_mode="Markdown"
-                )
-            else:
-                await bot.answer_callback_query(callback_query.id, "❌ No tienes permisos para abrir el panel.", show_alert=True)
+        elif data == "recargar_saldo":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver", callback_data="inicio"))
+            await callback_query.message.edit_caption(
+                caption="💳 **RECARGAR SALDO**\n\nPara añadir fondos a tu cuenta, comunícate directamente con soporte.",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
 
-        elif data == "owner_add_admin":
+        elif data == "canjear_cupon":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver", callback_data="inicio"))
+            await callback_query.message.edit_caption(
+                caption="🎟️ **CANJEAR CUPÓN**\n\nEnvía tu código de cupón al chat de soporte para validarlo.",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "mi_perfil":
+            saldo = USER_CREDITS.get(user_id, 0.0)
+            rango = "👑 Owner" if user_id == OWNER_ID else ("🛡️ Administrador" if user_id in ADMINS_IDS else "👤 Cliente")
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver", callback_data="inicio"))
+            await callback_query.message.edit_caption(
+                caption=f"👤 **MI PERFIL**\n\n- Nombre: {first_name}\n- ID: `{user_id}`\n- Rango: {rango}\n- Saldo: `${saldo:.2f} USD`",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "comprar_premium":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver", callback_data="inicio"))
+            await callback_query.message.edit_caption(
+                caption="💎 **MEMBRESÍA PREMIUM (10% OFF)**\n\nObtén acceso total a todos los scripts con descuento especial.",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        # --- PANEL DE OWNER ---
+        elif data == "panel_owner":
             if user_id != OWNER_ID:
+                await bot.answer_callback_query(callback_query.id, "❌ No tienes acceso a este panel.", show_alert=True)
                 return
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel"))
-            await bot.edit_message_text(
-                "➕ **AGREGAR NUEVO ADMIN**\n\nEnvíame el comando por chat privado:\n`/addadmin ID_DEL_USUARIO`",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+            
+            keyboard = InlineKeyboardMarkup(row_width=1).add(
+                InlineKeyboardButton("💰 Dar Créditos", callback_data="owner_dar_creditos"),
+                InlineKeyboardButton("💸 Quitar Créditos", callback_data="owner_quitar_creditos"),
+                InlineKeyboardButton("🛡️ Dar Rango (Admin)", callback_data="owner_dar_rango"),
+                InlineKeyboardButton("🔻 Quitar Rango (Admin)", callback_data="owner_quitar_rango"),
+                InlineKeyboardButton("📋 Lista de Admins", callback_data="owner_lista_admins"),
+                InlineKeyboardButton("📊 Estadísticas", callback_data="owner_stats"),
+                InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio")
+            )
+            await callback_query.message.edit_caption(
+                caption="👑 **PANEL DE OWNER - RAYO FIX**\n\nSelecciona una herramienta de gestión:",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
-        elif data == "owner_list_admins":
-            admins_text = "\n".join([str(aid) for aid in ADMINS_IDS]) if ADMINS_IDS else "No hay administradores registrados."
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel"))
-            await bot.edit_message_text(
-                f"📋 **LISTA DE ADMINISTRADORES:**\n\n{admins_text}",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+        elif data == "owner_dar_creditos":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
+            await callback_query.message.edit_caption(
+                caption="💰 **DAR CRÉDITOS (Owner)**\n\nUsa el comando en el chat:\n`/darcreditos ID_USUARIO MONTO`",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
-        elif data == "admin_credits_menu":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel"))
-            await bot.edit_message_text(
-                "💰 **GESTIÓN DE CRÉDITOS**\n\nUsa los comandos directos en el chat:\n• `/darcreditos ID MONTO`\n• `/quitarcreditos ID MONTO`",
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
+        elif data == "owner_quitar_creditos":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
+            await callback_query.message.edit_caption(
+                caption="💸 **QUITAR CRÉDITOS (Owner)**\n\nUsa el comando en el chat:\n`/quitarcreditos ID_USUARIO MONTO`",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
 
-        elif data == "cerrar":
-            await bot.delete_message(chat_id=callback_query.message.chat.id, message_id=callback_query.message.message_id)
+        elif data == "owner_dar_rango":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
+            await callback_query.message.edit_caption(
+                caption="🛡️ **DAR RANGO ADMIN**\n\nUsa el comando en el chat:\n`/darrango ID_USUARIO`",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "owner_quitar_rango":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
+            await callback_query.message.edit_caption(
+                caption="🔻 **QUITAR RANGO ADMIN**\n\nUsa el comando en el chat:\n`/quitarrango ID_USUARIO`",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "owner_lista_admins":
+            admins_text = "\n".join([f"• `{aid}`" for aid in ADMINS_IDS]) if ADMINS_IDS else "No hay administradores registrados."
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
+            await callback_query.message.edit_caption(
+                caption=f"📋 **LISTA DE ADMINISTRADORES:**\n\n{admins_text}",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "owner_stats":
+            total_usuarios = len(USER_CREDITS)
+            total_admins = len(ADMINS_IDS)
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
+            await callback_query.message.edit_caption(
+                caption=f"📊 **ESTADÍSTICAS DEL BOT**\n\n- Usuarios registrados: {total_usuarios}\n- Administradores activos: {total_admins}\n- Estado del Bot: 🟢 En Línea (Render)",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        # --- PANEL DE ADMIN ---
+        elif data == "panel_admin":
+            if user_id not in ADMINS_IDS and user_id != OWNER_ID:
+                await bot.answer_callback_query(callback_query.id, "❌ No tienes permisos de administrador.", show_alert=True)
+                return
+
+            keyboard = InlineKeyboardMarkup(row_width=1).add(
+                InlineKeyboardButton("💰 Dar Créditos", callback_data="admin_dar_creditos"),
+                InlineKeyboardButton("💸 Quitar Créditos", callback_data="admin_quitar_creditos"),
+                InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio")
+            )
+            await callback_query.message.edit_caption(
+                caption="⚙️ **PANEL DE ADMINISTRADOR**\n\nSelecciona una opción:",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "admin_dar_creditos":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_admin"))
+            await callback_query.message.edit_caption(
+                caption="💰 **DAR CRÉDITOS (Admin)**\n\nUsa el comando en el chat:\n`/darcreditos ID_USUARIO MONTO`",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+
+        elif data == "admin_quitar_creditos":
+            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_admin"))
+            await callback_query.message.edit_caption(
+                caption="💸 **QUITAR CRÉDITOS (Admin)**\n\nUsa el comando en el chat:\n`/quitarcreditos ID_USUARIO MONTO`",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
 
     except Exception as e:
         logger.error(f"Error en callback: {e}")
 
-# Comandos de administración
-@dp.message_handler(commands=["panel"])
-async def cmd_panel(message: types.Message):
-    user_id = message.from_user.id
-    if user_id == OWNER_ID or user_id in ADMINS_IDS:
-        keyboard = InlineKeyboardMarkup(row_width=1)
-        if user_id == OWNER_ID:
-            keyboard.add(InlineKeyboardButton("➕ Agregar Admin", callback_data="owner_add_admin"))
-        keyboard.add(
-            InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins"),
-            InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu"),
-            InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")
-        )
-        await message.reply("👑 **PANEL DE ADMINISTRACIÓN**\n\nSelecciona una opción:", reply_markup=keyboard, parse_mode="Markdown")
-    else:
-        await message.reply("❌ No tienes permisos para usar este comando.")
-
-@dp.message_handler(commands=["addadmin"])
-async def cmd_addadmin(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return
-    try:
-        nuevo_id = int(message.text.split()[1])
-        if nuevo_id not in ADMINS_IDS:
-            ADMINS_IDS.append(nuevo_id)
-            await message.reply(f"✅ ¡Usuario `{nuevo_id}` agregado como Admin exitosamente!", parse_mode="Markdown")
-        else:
-            await message.reply("⚠️ Ese usuario ya es administrador.")
-    except (IndexError, ValueError):
-        await message.reply("❌ Uso incorrecto. Ejemplo: `/addadmin 123456789`", parse_mode="Markdown")
-
+# --- COMANDOS DE GESTIÓN (ADMIN Y OWNER) ---
 @dp.message_handler(commands=["darcreditos"])
 async def cmd_darcreditos(message: types.Message):
-    if message.from_user.id != OWNER_ID and message.from_user.id not in ADMINS_IDS:
+    user_id = message.from_user.id
+    if user_id != OWNER_ID and user_id not in ADMINS_IDS:
         return
     try:
         partes = message.text.split()
         target_id = int(partes[1])
-        cantidad = int(partes[2])
-        USER_CREDITS[target_id] = USER_CREDITS.get(target_id, 0) + cantidad
-        saldo_actual = USER_CREDITS[target_id]
-        await message.reply(f"✅ Agregados **{cantidad} créditos** al usuario `{target_id}`.\nSaldo total: **{saldo_actual}**.", parse_mode="Markdown")
+        cantidad = float(partes[2])
+        USER_CREDITS[target_id] = USER_CREDITS.get(target_id, 0.0) + cantidad
+        await message.reply(f"✅ Agregados **${cantidad:.2f}** al usuario `{target_id}`.", parse_mode="Markdown")
     except (IndexError, ValueError):
-        await message.reply("❌ Uso incorrecto. Ejemplo: `/darcreditos 123456789 50`", parse_mode="Markdown")
+        await message.reply("❌ Uso incorrecto. Ejemplo: `/darcreditos 123456789 10`", parse_mode="Markdown")
 
 @dp.message_handler(commands=["quitarcreditos"])
 async def cmd_quitarcreditos(message: types.Message):
-    if message.from_user.id != OWNER_ID and message.from_user.id not in ADMINS_IDS:
+    user_id = message.from_user.id
+    if user_id != OWNER_ID and user_id not in ADMINS_IDS:
         return
     try:
         partes = message.text.split()
         target_id = int(partes[1])
-        cantidad = int(partes[2])
-        saldo_actual = USER_CREDITS.get(target_id, 0)
-        nuevos_creditos = max(0, saldo_actual - cantidad)
-        USER_CREDITS[target_id] = nuevos_creditos
-        await message.reply(f"⚠️ Retirados **{cantidad} créditos** al usuario `{target_id}`.\nSaldo actual: **{nuevos_creditos}**.", parse_mode="Markdown")
+        cantidad = float(partes[2])
+        saldo_actual = USER_CREDITS.get(target_id, 0.0)
+        nuevo_saldo = max(0.0, saldo_actual - cantidad)
+        USER_CREDITS[target_id] = nuevo_saldo
+        await message.reply(f"⚠️ Retirados **${cantidad:.2f}** al usuario `{target_id}`. Saldo actual: **${nuevo_saldo:.2f}**.", parse_mode="Markdown")
     except (IndexError, ValueError):
-        await message.reply("❌ Uso incorrecto. Ejemplo: `/quitarcreditos 123456789 20`", parse_mode="Markdown")
+        await message.reply("❌ Uso incorrecto. Ejemplo: `/quitarcreditos 123456789 5`", parse_mode="Markdown")
 
-@dp.message_handler(commands=["miscreditos"])
-async def cmd_miscreditos(message: types.Message):
-    saldo = USER_CREDITS.get(message.from_user.id, 0)
-    await message.reply(f"💳 Tu saldo actual es de: **{saldo} créditos**.", parse_mode="Markdown")
+@dp.message_handler(commands=["darrango"])
+async def cmd_darrango(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    try:
+        target_id = int(message.text.split()[1])
+        if target_id not in ADMINS_IDS and target_id != OWNER_ID:
+            ADMINS_IDS.append(target_id)
+            await message.reply(f"✅ ¡Usuario `{target_id}` ascendido a Administrador exitosamente!", parse_mode="Markdown")
+        else:
+            await message.reply("⚠️ El usuario ya es administrador o es el owner.")
+    except (IndexError, ValueError):
+        await message.reply("❌ Uso incorrecto. Ejemplo: `/darrango 123456789`", parse_mode="Markdown")
+
+@dp.message_handler(commands=["quitarrango"])
+async def cmd_quitarrango(message: types.Message):
+    if message.from_user.id != OWNER_ID:
+        return
+    try:
+        target_id = int(message.text.split()[1])
+        if target_id in ADMINS_IDS:
+            ADMINS_IDS.remove(target_id)
+            await message.reply(f"🔻 El usuario `{target_id}` ha sido retirado del rango de Administrador.", parse_mode="Markdown")
+        else:
+            await message.reply("⚠️ Ese usuario no se encuentra en la lista de administradores.")
+    except (IndexError, ValueError):
+        await message.reply("❌ Uso incorrecto. Ejemplo: `/quitarrango 123456789`", parse_mode="Markdown")
 
 if __name__ == "__main__":
     from aiogram import executor
