@@ -5,10 +5,9 @@ from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# Configuración básica de logs
 logging.basicConfig(level=logging.INFO)
 
-# --- MINI SERVIDOR WEB PARA CUMPLIR CON EL PUERTO DE RENDER ---
+# --- MINI SERVIDOR WEB PARA RENDER ---
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -19,11 +18,10 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
 
-# Iniciar el servidor web en un hilo secundario
 Thread(target=run_web, daemon=True).start()
-# -------------------------------------------------------------
+# -------------------------------------
 
-# Configuración del Bot con el token nuevo y oficial proporcionado
+# Configuración del Bot
 app = Client(
     "rayo_store_bot",
     api_id=38961296,
@@ -31,21 +29,23 @@ app = Client(
     bot_token="8717156909:AAGh4hpveIzg61gG1nGFtdg-aCi94YA05cE"
 )
 
-# Tu ID configurado como Owner principal 👑
 OWNER_ID = 7939709543  
-
-# Listas y bases de datos en memoria
 ADMINS_IDS = []  
 USER_CREDITS = {}  
 
-# --- COMANDO /START Y MENÚ PRINCIPAL ---
-@app.on_message(filters.command("start") & filters.private)
-async def start_command(client, message):
+# Manejador universal para cualquier mensaje o comando /start
+@app.on_message(filters.private)
+async def all_messages(client, message):
+    texto = message.text if message.text else ""
+    user_id = message.from_user.id
+    
+    # Si escriben start o cualquier cosa, respondemos con el menú
     keyboard = [
         [InlineKeyboardButton("📂 VER CATÁLOGO", callback_data="ver_catalogo")],
         [InlineKeyboardButton("💳 MIS CRÉDITOS", callback_data="ver_mis_creditos")],
         [InlineKeyboardButton("⚙️ PANEL", callback_data="abrir_panel")]
     ]
+    
     await message.reply_text(
         "👋 ¡Bienvenido a **Rayo Store**!\n\nSelecciona una de las opciones del menú:",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -174,8 +174,8 @@ async def callback_handler(client, callback_query):
             if user_id != OWNER_ID and user_id not in ADMINS_IDS:
                 return
             keyboard = [
-                [InlineKeyboardButton("➕ Dar Créditos (Usa /darcreditos ID MONTO)", callback_data="abrir_panel")],
-                [InlineKeyboardButton("➖ Quitar Créditos (Usa /quitarcreditos ID MONTO)", callback_data="abrir_panel")],
+                [InlineKeyboardButton("➕ Dar Créditos", callback_data="abrir_panel")],
+                [InlineKeyboardButton("➖ Quitar Créditos", callback_data="abrir_panel")],
                 [InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel")]
             ]
             await callback_query.message.edit_text(
@@ -192,80 +192,7 @@ async def callback_handler(client, callback_query):
         except:
             pass
 
-# --- COMANDOS DE TEXTO ---
-
-@app.on_message(filters.command("panel") & filters.private)
-async def panel_command(client, message):
-    user_id = message.from_user.id
-    if user_id == OWNER_ID:
-        keyboard = [
-            [InlineKeyboardButton("➕ Agregar Admin", callback_data="owner_add_admin")],
-            [InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins")],
-            [InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu")],
-            [InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")]
-        ]
-        await message.reply_text("👑 **PANEL DE OWNER**\n\nSelecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif user_id in ADMINS_IDS:
-        keyboard = [
-            [InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins")],
-            [InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu")],
-            [InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")]
-        ]
-        await message.reply_text("🛡️ **PANEL DE ADMINISTRADOR**\n\nSelecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await message.reply_text("❌ No tienes permisos para usar este comando.")
-
-@app.on_message(filters.command("addadmin") & filters.private)
-async def addadmin_command(client, message):
-    if message.from_user.id != OWNER_ID:
-        return
-    try:
-        nuevo_id = int(message.text.split()[1])
-        if nuevo_id not in ADMINS_IDS:
-            ADMINS_IDS.append(nuevo_id)
-            await message.reply_text(f"✅ ¡Usuario `{nuevo_id}` agregado como Admin exitosamente!")
-        else:
-            await message.reply_text("⚠️ Ese usuario ya es administrador.")
-    except (IndexError, ValueError):
-        await message.reply_text("❌ Uso incorrecto. Ejemplo: `/addadmin 123456789`")
-
-@app.on_message(filters.command("darcreditos") & filters.private)
-async def darcreditos_command(client, message):
-    user_id = message.from_user.id
-    if user_id != OWNER_ID and user_id not in ADMINS_IDS:
-        return
-    try:
-        partes = message.text.split()
-        target_id = int(partes[1])
-        cantidad = int(partes[2])
-        USER_CREDITS[target_id] = USER_CREDITS.get(target_id, 0) + cantidad
-        saldo_actual = USER_CREDITS[target_id]
-        await message.reply_text(f"✅ Agregados **{cantidad} créditos** al usuario `{target_id}`.\nSaldo total: **{saldo_actual}**.")
-    except (IndexError, ValueError):
-        await message.reply_text("❌ Uso incorrecto. Ejemplo: `/darcreditos 123456789 50`")
-
-@app.on_message(filters.command("quitarcreditos") & filters.private)
-async def quitarcreditos_command(client, message):
-    user_id = message.from_user.id
-    if user_id != OWNER_ID and user_id not in ADMINS_IDS:
-        return
-    try:
-        partes = message.text.split()
-        target_id = int(partes[1])
-        cantidad = int(partes[2])
-        saldo_actual = USER_CREDITS.get(target_id, 0)
-        nuevos_creditos = max(0, saldo_actual - cantidad)
-        USER_CREDITS[target_id] = nuevos_creditos
-        await message.reply_text(f"⚠️ Retirados **{cantidad} créditos** al usuario `{target_id}`.\nSaldo actual: **{nuevos_creditos}**.")
-    except (IndexError, ValueError):
-        await message.reply_text("❌ Uso incorrecto. Ejemplo: `/quitarcreditos 123456789 20`")
-
-@app.on_message(filters.command("miscreditos") & filters.private)
-async def miscreditos_command(client, message):
-    saldo = USER_CREDITS.get(message.from_user.id, 0)
-    await message.reply_text(f"💳 Tu saldo actual es de: **{saldo} créditos**.")
-
 if __name__ == "__main__":
-    print("Iniciando bot de Telegram con el nuevo token...")
+    print("Iniciando bot con escucha general...")
     app.run()
-                       
+                                          
