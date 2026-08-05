@@ -6,7 +6,7 @@ from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Configuración de logs profesionales
+# Configuración de logs limpios
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -31,20 +31,16 @@ Thread(target=run_web, daemon=True).start()
 TOKEN = "8799688315:AAH3afiU9b8RdEuWtCtj3ooBTopEgaJMFFg"
 OWNER_ID = 7939709543
 
-logger.info("Iniciando componentes del sistema...")
-time.sleep(2)
-
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-# Base de datos en memoria (Estructura limpia)
+# Base de datos en memoria
 ADMINS_IDS = []
 USER_CREDITS = {}
 ALL_USERS = set()
 
-# Banners estéticos oficiales para la interfaz visual
+# Banners estéticos oficiales
 BANNER_PRINCIPAL = "https://i.ibb.co/3m20gX28/51614.jpg"
-BANNER_CATALOGO = "https://i.ibb.co/3m20gX28/51614.jpg"
 
 # ==========================================
 #         ESTRUCTURAS DE MENÚS (UI/UX)
@@ -103,8 +99,7 @@ async def cmd_start(message: types.Message):
     ALL_USERS.add(user_id)
 
     try:
-        await bot.send_photo(
-            chat_id=message.chat.id,
+        await message.answer_photo(
             photo=BANNER_PRINCIPAL,
             caption=texto_principal(user_id, first_name),
             reply_markup=menu_principal(user_id),
@@ -124,7 +119,6 @@ async def cmd_start(message: types.Message):
 
 @dp.callback_query_handler(lambda c: True)
 async def process_callback(callback_query: types.CallbackQuery):
-    # Respuesta inmediata para eliminar el estado de carga del botón en Telegram
     await callback_query.answer()
 
     data = callback_query.data
@@ -182,7 +176,7 @@ async def process_callback(callback_query: types.CallbackQuery):
             keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo"))
             await bot.edit_message_caption(
                 chat_id=chat_id, message_id=message_id,
-                caption="🛒 Para adquirir este producto de forma automática o asistida, contacta directamente con nuestro soporte oficial.",
+                caption="🛒 Para adquirir este producto, contacta directamente con nuestro soporte oficial.",
                 reply_markup=keyboard, parse_mode="Markdown"
             )
 
@@ -220,11 +214,10 @@ async def process_callback(callback_query: types.CallbackQuery):
             keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Menú", callback_data="inicio"))
             await bot.edit_message_caption(
                 chat_id=chat_id, message_id=message_id,
-                caption="💎 **MEMBRESÍA PREMIUM (10% OFF)**\n\nObtén beneficios exclusivos, prioridad total y herramientas ilimitadas.",
+                caption="💎 **MEMBRESÍA PREMIUM (10% OFF)**\n\nObtén beneficios exclusivos y prioridad total.",
                 reply_markup=keyboard, parse_mode="Markdown"
             )
 
-        # --- PANEL DE OWNER ---
         elif data == "panel_owner":
             if user_id != OWNER_ID:
                 return
@@ -234,11 +227,10 @@ async def process_callback(callback_query: types.CallbackQuery):
                 InlineKeyboardButton("🛡️ Dar Rango", callback_data="owner_dar_rango"),
                 InlineKeyboardButton("🔻 Quitar Rango", callback_data="owner_quitarrango")
             )
-            keyboard.add(InlineKeyboardButton("📢 Enviar Promoción Masiva", callback_data="owner_promo_info"))
             keyboard.add(InlineKeyboardButton("⬅️ Volver al Menú Principal", callback_data="inicio"))
             await bot.edit_message_caption(
                 chat_id=chat_id, message_id=message_id,
-                caption="👑 **PANEL DE OWNER - RAYO FIX**\n\nSelecciona una opción administrativa:",
+                caption="👑 **PANEL DE OWNER**\n\nSelecciona una opción administrativa:",
                 reply_markup=keyboard, parse_mode="Markdown"
             )
 
@@ -258,28 +250,15 @@ async def process_callback(callback_query: types.CallbackQuery):
             keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
             await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="🔻 **QUITAR RANGO ADMIN**\n\nUsa en el chat:\n`/quitarrango ID_USUARIO`", reply_markup=keyboard, parse_mode="Markdown")
 
-        elif data == "owner_promo_info":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner"))
-            await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="📢 **PROMOCIÓN MASIVA**\n\nPara difundir anuncios, usa en el chat:\n`/promo Tu mensaje aquí`", reply_markup=keyboard, parse_mode="Markdown")
-
-        # --- PANEL DE ADMIN ---
         elif data == "panel_admin":
             if user_id not in ADMINS_IDS and user_id != OWNER_ID:
                 return
             keyboard = InlineKeyboardMarkup(row_width=2).add(
-                InlineKeyboardButton("💰 Dar Créditos", callback_data="admin_dar_creditos"),
-                InlineKeyboardButton("💸 Quitar Créditos", callback_data="admin_quitar_creditos")
+                InlineKeyboardButton("💰 Dar Créditos", callback_data="owner_dar_creditos"),
+                InlineKeyboardButton("💸 Quitar Créditos", callback_data="owner_quitar_creditos")
             )
             keyboard.add(InlineKeyboardButton("⬅️ Volver al Menú Principal", callback_data="inicio"))
             await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="⚙️ **PANEL DE ADMINISTRADOR**", reply_markup=keyboard, parse_mode="Markdown")
-
-        elif data == "admin_dar_creditos":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_admin"))
-            await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="💰 Usa en el chat:\n`/darcreditos ID MONTO`", reply_markup=keyboard, parse_mode="Markdown")
-
-        elif data == "admin_quitar_creditos":
-            keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_admin"))
-            await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="💸 Usa en el chat:\n`/quitarcreditos ID MONTO`", reply_markup=keyboard, parse_mode="Markdown")
 
     except Exception as e:
         logger.error(f"Error procesando botón interactivo: {e}")
@@ -287,37 +266,6 @@ async def process_callback(callback_query: types.CallbackQuery):
 # ==========================================
 #          COMANDOS ADMINISTRATIVOS
 # ==========================================
-
-@dp.message_handler(commands=["promo"])
-async def cmd_promo(message: types.Message):
-    if message.from_user.id != OWNER_ID:
-        return
-    
-    texto_promo = message.text.replace("/promo", "").strip()
-    if not texto_promo:
-        await message.reply("❌ Escribe el texto de la promoción:\n`/promo 🔥 NUEVA ACTUALIZACIÓN 🔥`", parse_mode="Markdown")
-        return
-
-    promo_keyboard = InlineKeyboardMarkup(row_width=2).add(
-        InlineKeyboardButton("👑 DUEÑO", url="https://t.me/StoreFixersXiters"),
-        InlineKeyboardButton("📢 CANAL OFICIAL", url="https://t.me/StoreFixersXiters"),
-    )
-
-    enviados = 0
-    for uid in ALL_USERS:
-        try:
-            await bot.send_photo(
-                chat_id=uid,
-                photo=BANNER_PRINCIPAL,
-                caption=f"📢 **AVISO OFICIAL - RAYO FIX**\n\n{texto_promo}",
-                reply_markup=promo_keyboard,
-                parse_mode="Markdown"
-            )
-            enviados += 1
-        except Exception as e:
-            logger.error(f"Error al enviar promo a {uid}: {e}")
-
-    await message.reply(f"✅ ¡Promoción difundida con éxito a **{enviados}** usuarios!")
 
 @dp.message_handler(commands=["darcreditos"])
 async def cmd_darcreditos(message: types.Message):
@@ -375,8 +323,19 @@ async def cmd_quitarrango(message: types.Message):
     except (IndexError, ValueError):
         await message.reply("❌ Formato incorrecto. Uso:\n`/quitarrango 123456789`", parse_mode="Markdown")
 
+# ==========================================
+#      INICIO SEGURO CONTRA FLOOD CONTROL
+# ==========================================
+
 if __name__ == "__main__":
     from aiogram import executor
-    logger.info("Iniciando Bot de Telegram Profesional...")
-    executor.start_polling(dp, skip_updates=True)
-        
+    logger.info("Iniciando Bot de Telegram Profesional con control de estabilidad...")
+    
+    # Bucle inteligente para reintentar la conexión si Telegram banea temporalmente por reinicios de Render
+    while True:
+        try:
+            executor.start_polling(dp, skip_updates=True)
+        except Exception as e:
+            logger.error(f"Error en el ciclo de polling: {e}. Esperando 20 segundos para reintentar...")
+            time.sleep(20)
+    
