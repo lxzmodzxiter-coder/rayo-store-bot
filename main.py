@@ -464,7 +464,7 @@ async def cmd_daradmin(message: types.Message):
         cursor.execute("UPDATE users SET rango = 'Administrador' WHERE user_id = ?", (target_id,))
         conn.commit()
         conn.close()
-                await message.reply(f"✅ Se agregaron **${monto:.2f} USD** al usuario `{target_id}`.", parse_mode="Markdown")
+                                await message.reply(f"✅ Se agregaron **${monto:.2f} USD** al usuario `{target_id}`.", parse_mode="Markdown")
     except Exception:
         await message.reply("❌ Uso incorrecto. Ejemplo: `/darsaldo 123456789 10`", parse_mode="Markdown")
 
