@@ -228,7 +228,12 @@ async def process_callback(callback_query: types.CallbackQuery):
             await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption="💸 Usa en el chat:\n`/quitarcreditos ID MONTO`", reply_markup=keyboard, parse_mode="Markdown")
 
     except Exception as e:
-        logger.error(f"Error en callback instantáneo: {e}")
+        # Fallback de seguridad: si Telegram bloquea la edición por contenido idéntico, enviamos un mensaje nuevo limpio
+        logger.error(f"Error al editar caption, intentando enviar nuevo mensaje: {e}")
+        try:
+            await bot.send_message(chat_id, "⚠️ Actualizando menú...", reply_markup=main_menu(user_id))
+        except Exception:
+            pass
 
 # Comando para difusión de promos
 @dp.message_handler(commands=["promo"])
@@ -322,6 +327,6 @@ async def cmd_quitarrango(message: types.Message):
 
 if __name__ == "__main__":
     from aiogram import executor
-    logger.info("Iniciando bot con interacción ultra rápida...")
+    logger.info("Iniciando bot con manejo de excepciones y respuesta instantánea...")
     executor.start_polling(dp, skip_updates=True)
-                                                                       
+    
