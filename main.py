@@ -23,12 +23,12 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 # -------------------------------------------------------------
 
-# Configuración del Bot con tus credenciales oficiales
+# Configuración del Bot con el token nuevo y oficial proporcionado
 app = Client(
     "rayo_store_bot",
     api_id=38961296,
     api_hash="ff178285b739a05289139f74f397a3ba",
-    bot_token="8717156989:AAFrMR2eeJpgGBCojzNfdLx-CoQQE6gJRSY"
+    bot_token="8717156909:AAGh4hpveIzg61gG1nGFtdg-aCi94YA05cE"
 )
 
 # Tu ID configurado como Owner principal 👑
@@ -266,6 +266,6 @@ async def miscreditos_command(client, message):
     await message.reply_text(f"💳 Tu saldo actual es de: **{saldo} créditos**.")
 
 if __name__ == "__main__":
-    print("Iniciando bot de Telegram en paralelo...")
+    print("Iniciando bot de Telegram con el nuevo token...")
     app.run()
-                
+                       
