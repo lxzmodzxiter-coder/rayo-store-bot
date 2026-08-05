@@ -1,4 +1,5 @@
 import logging
+import os
 from threading import Thread
 from flask import Flask
 from pyrogram import Client, filters
@@ -15,12 +16,11 @@ def home():
     return "¡Rayo Store Bot está activo y funcionando perfectamente!"
 
 def run_web():
-    import os
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
 
-# Iniciar el servidor web en un hilo paralelo
-Thread(target=run_web).start()
+# Iniciar el servidor web en un hilo secundario
+Thread(target=run_web, daemon=True).start()
 # -------------------------------------------------------------
 
 # Configuración del Bot con tus credenciales oficiales
@@ -35,8 +35,8 @@ app = Client(
 OWNER_ID = 7939709543  
 
 # Listas y bases de datos en memoria
-ADMINS_IDS = []  # IDs de administradores permitidos
-USER_CREDITS = {}  # Diccionario para almacenar los créditos (User_ID: Cantidad)
+ADMINS_IDS = []  
+USER_CREDITS = {}  
 
 # --- COMANDO /START Y MENÚ PRINCIPAL ---
 @app.on_message(filters.command("start") & filters.private)
@@ -59,7 +59,6 @@ async def callback_handler(client, callback_query):
     user_id = callback_query.from_user.id
 
     try:
-        # 1. Menú Principal / Inicio
         if data == "inicio":
             keyboard = [
                 [InlineKeyboardButton("📂 VER CATÁLOGO", callback_data="ver_catalogo")],
@@ -72,7 +71,6 @@ async def callback_handler(client, callback_query):
                 parse_mode="Markdown"
             )
 
-        # 2. Catálogo Principal (Android e iOS)
         elif data == "ver_catalogo":
             keyboard = [
                 [InlineKeyboardButton("🤖 ANDROID", callback_data="cat_android")],
@@ -85,7 +83,6 @@ async def callback_handler(client, callback_query):
                 parse_mode="Markdown"
             )
 
-        # 3. Categoría Android
         elif data == "cat_android":
             keyboard = [
                 [InlineKeyboardButton("📦 DRIP CLIENT APK MOD", callback_data="comprar_prod")],
@@ -106,7 +103,6 @@ async def callback_handler(client, callback_query):
                 parse_mode="Markdown"
             )
 
-        # 4. Categoría iOS
         elif data == "cat_ios":
             keyboard = [
                 [InlineKeyboardButton("📦 MONITE PRO", callback_data="comprar_prod")],
@@ -123,7 +119,6 @@ async def callback_handler(client, callback_query):
                 parse_mode="Markdown"
             )
 
-        # 5. Aviso de compra o selección de producto
         elif data == "comprar_prod":
             keyboard = [[InlineKeyboardButton("⬅️ Volver al Catálogo", callback_data="ver_catalogo")]]
             await callback_query.message.edit_text(
@@ -131,7 +126,6 @@ async def callback_handler(client, callback_query):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-        # 6. Ver Créditos del usuario
         elif data == "ver_mis_creditos":
             saldo = USER_CREDITS.get(user_id, 0)
             keyboard = [[InlineKeyboardButton("⬅️ Volver al Inicio", callback_data="inicio")]]
@@ -141,7 +135,6 @@ async def callback_handler(client, callback_query):
                 parse_mode="Markdown"
             )
 
-        # 7. Botón del Panel general
         elif data == "abrir_panel":
             if user_id == OWNER_ID:
                 keyboard = [
@@ -161,7 +154,6 @@ async def callback_handler(client, callback_query):
             else:
                 await callback_query.answer("❌ No tienes permisos para abrir el panel.", show_alert=True)
 
-        # 8. Submenús del Panel de Admin / Owner
         elif data == "owner_add_admin":
             if user_id != OWNER_ID:
                 return
@@ -194,13 +186,13 @@ async def callback_handler(client, callback_query):
         elif data == "cerrar":
             await callback_query.message.delete()
             
-    except Exception as e:
+    except Exception:
         try:
             await callback_query.answer()
         except:
             pass
 
-# --- COMANDOS DE TEXTO PARA PANEL Y CREDITO ---
+# --- COMANDOS DE TEXTO ---
 
 @app.on_message(filters.command("panel") & filters.private)
 async def panel_command(client, message):
@@ -274,6 +266,6 @@ async def miscreditos_command(client, message):
     await message.reply_text(f"💳 Tu saldo actual es de: **{saldo} créditos**.")
 
 if __name__ == "__main__":
-    print("El bot y el servidor web están iniciando...")
+    print("Iniciando bot de Telegram en paralelo...")
     app.run()
                 
