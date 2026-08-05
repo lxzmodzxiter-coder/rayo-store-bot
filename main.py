@@ -22,8 +22,8 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 # -------------------------------------------------------------
 
-# Token oficial de tu bot
-TOKEN = "8717156909:AAGh4hpveIzg61gG1nGFtdg-aCi94YA05cE"
+# Nuevo Token oficial de tu bot actualizado
+TOKEN = "8717156909:AAH7zXtwD7gKcvdFPI62VlTyI0AN61MhAzc"
 OWNER_ID = 7939709543
 
 bot = Bot(token=TOKEN)
@@ -282,4 +282,4 @@ if __name__ == "__main__":
     from aiogram import executor
     print("Iniciando bot con aiogram...")
     executor.start_polling(dp, skip_updates=True)
-            
+                
