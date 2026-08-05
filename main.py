@@ -1,199 +1,282 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler, CallbackQueryHandler
+import logging
+from threading import Thread
+from flask import Flask
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# ⚠️ TU ID DE OWNER DE TELEGRAM
-OWNER_ID = 7939709543
+# Configuración básica de logs
+logging.basicConfig(level=logging.INFO)
 
-# Base de datos en memoria
-DB_USUARIOS = {}
+# --- MINI SERVIDOR WEB PARA CUMPLIR CON EL PUERTO DE RENDER ---
+web_app = Flask(__name__)
 
-def obtener_o_crear_usuario(user):
-    user_id = user.id
-    if user_id not in DB_USUARIOS:
-        nombre_telegram = user.first_name if user.first_name else "Cliente"
-        DB_USUARIOS[user_id] = {
-            "nombre": nombre_telegram,
-            "id_cuenta": str(user_id),
-            "saldo": 0.00
-        }
-    return DB_USUARIOS[user_id]
+@web_app.route('/')
+def home():
+    return "¡Rayo Store Bot está activo y funcionando perfectamente!"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    datos_usuario = obtener_o_crear_usuario(user)
-    
+def run_web():
+    # Render asigna un puerto mediante la variable de entorno 'PORT', si no hay usa el 8080
+    import os
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host="0.0.0.0", port=port)
+
+# Iniciar el servidor web en un hilo paralelo
+Thread(target=run_web).start()
+# -------------------------------------------------------------
+
+# Configuración del Bot
+app = Client(
+    "rayo_store_bot",
+    api_id=123456,  # Pon tu api_id si lo manejas directo
+    api_hash="tu_api_hash",
+    bot_token="8717156989:AAFrMR2eeJpgGBCojzNfdLx-CoQQE6gJRSY"  # Token del bot
+)
+
+# Tu ID configurado como Owner principal 👑
+OWNER_ID = 7939709543  
+
+# Listas y bases de datos en memoria
+ADMINS_IDS = []  # IDs de administradores permitidos
+USER_CREDITS = {}  # Diccionario para almacenar los créditos (User_ID: Cantidad)
+
+# --- COMANDO /START Y MENÚ PRINCIPAL ---
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client, message):
     keyboard = [
-        [InlineKeyboardButton("🛒 VER CATALOGO SOCIOS", callback_data="ver_catalogo")],
-        [InlineKeyboardButton("💳 Recargar Saldo", callback_data="recargar"),
-         InlineKeyboardButton("🎁 Canjear Cupón", callback_data="cupon")],
-        [InlineKeyboardButton("👤 Mi Perfil / Historial", callback_data="perfil")],
-        [InlineKeyboardButton("💎 Adquirir Premium ( 10% OFF 💰 )", callback_data="premium")],
-        [InlineKeyboardButton("👨‍💻 Soporte Directo", url="https://t.me/TuUsuario"),
-         InlineKeyboardButton("📢 Canal Oficial", url="https://t.me/TuCanal")]
+        [InlineKeyboardButton("📂 VER CATÁLOGO", callback_data="ver_catalogo")],
+        [InlineKeyboardButton("💳 MIS CRÉDITOS", callback_data="ver_mis_creditos")],
+        [InlineKeyboardButton("⚙️ PANEL", callback_data="abrir_panel")]
     ]
-    
-    if user_id == OWNER_ID:
-        keyboard.insert(0, [InlineKeyboardButton("👑 PANEL DE OWNER / ADMIN", callback_data="panel_owner")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    mensaje = (
-        f"🤖 **RESELLERS STORE** 🛍️\n\n"
-        f"👤 Cliente: {datos_usuario['nombre']}\n"
-        f"🆔 ID de Cuenta: {datos_usuario['id_cuenta']}\n"
-        f"💰 Saldo Disponible: ${datos_usuario['saldo']:.2f} USD\n\n"
-        f"¿Qué vamos a hacer hoy, bb? Elige una opción:"
-    )
-    
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(mensaje, reply_markup=reply_markup, parse_mode="Markdown")
-    else:
-        await update.message.reply_text(mensaje, reply_markup=reply_markup, parse_mode="Markdown")
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    
-    # ⚡ RESPUESTA INMEDIATA para evitar que Telegram caduque el botón
-    try:
-        await query.answer()
-    except Exception:
-        pass
-
-    user = query.from_user
-    user_id = user.id
-    data = query.data
-    datos_usuario = obtener_o_crear_usuario(user)
-
-    if data == "panel_owner":
-        if user_id != OWNER_ID:
-            return
-        total_usuarios = len(DB_USUARIOS)
-        keyboard = [
-            [InlineKeyboardButton("➕ Agregar Saldo (/dar ID MONTO)", callback_data="info_dar")],
-            [InlineKeyboardButton("👥 Ver Clientes Registrados", callback_data="ver_clientes")],
-            [InlineKeyboardButton("⬅️ Volver al Inicio", callback_data="inicio")]
-        ]
-        await query.edit_message_text(
-            f"👑 **PANEL DE CONTROL - OWNER**\n\n"
-            f"📊 Usuarios en la base: {total_usuarios}\n"
-            f"Selecciona una opción:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-
-    elif data == "ver_clientes":
-        if user_id != OWNER_ID:
-            return
-        texto_clientes = "👥 **LISTA DE CLIENTES:**\n\n"
-        for uid, info in DB_USUARIOS.items():
-            texto_clientes += f"• {info['nombre']} (ID: `{info['id_cuenta']}`) - Saldo: ${info['saldo']:.2f}\n"
-        
-        keyboard = [[InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner")]]
-        await query.edit_message_text(texto_clientes, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "info_dar":
-        if user_id != OWNER_ID:
-            return
-        keyboard = [[InlineKeyboardButton("⬅️ Volver al Panel", callback_data="panel_owner")]]
-        await query.edit_message_text(
-            "💡 **CÓMO DAR CRÉDITOS:**\n\n"
-            "Usa el comando en el chat:\n"
-            "`/dar [ID_DE_TELEGRAM] [MONTO]`\n"
-            "Ejemplo: `/dar 7939709543 15`",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-
-    elif data == "ver_catalogo":
-        keyboard = [
-            [InlineKeyboardButton("📁 DRIP CLIENT OFICIAL 🟣", callback_data="cat_drip")],
-            [InlineKeyboardButton("📁 PRODUCTOS EXTRAS 🏠", callback_data="cat_extras")],
-            [InlineKeyboardButton("⬅️ Regresar al Inicio", callback_data="inicio")]
-        ]
-        await query.edit_message_text("📂 **CATEGORÍAS DISPONIBLES** 🎮\nSelecciona la categoría de tu interés:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        
-    elif data == "cat_drip":
-        keyboard = [
-            [InlineKeyboardButton("📦 Drip Client Apk 🛍️", callback_data="comprar_apk")],
-            [InlineKeyboardButton("📦 Drip Client Proxy 🛍️", callback_data="comprar_proxy")],
-            [InlineKeyboardButton("📦 Drip Client Root 🛍️", callback_data="comprar_root")],
-            [InlineKeyboardButton("📦 Drip Client Pc 🛍️", callback_data="comprar_pc")],
-            [InlineKeyboardButton("⬅️ Volver al las Categorías", callback_data="ver_catalogo")]
-        ]
-        await query.edit_message_text("📁 **DRIP CLIENT OFICIAL** 🟣\n\n📦 PRODUCTOS DISPONIBLES 🔥\nSelecciona lo que te vas a llevar:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "cat_extras":
-        keyboard = [
-            [InlineKeyboardButton("📦 CERTIFICADO GBOX 🛍️", callback_data="comprar_gbox")],
-            [InlineKeyboardButton("📦 MONITE CHEATS IOS 🛍️", callback_data="comprar_monite")],
-            [InlineKeyboardButton("📦 PRIME HOCK APK 🛍️", callback_data="comprar_prime")],
-            [InlineKeyboardButton("📦 PROXY CUBAN 🛍️", callback_data="comprar_cuban")],
-            [InlineKeyboardButton("📦 CUBAN MODZ APK 🛍️", callback_data="comprar_cubanmodz")],
-            [InlineKeyboardButton("⬅️ Volver a las Categorías", callback_data="ver_catalogo")]
-        ]
-        await query.edit_message_text("📁 **PRODUCTOS EXTRAS** 🏠\n\n📦 PRODUCTOS DISPONIBLES 🔥\nSelecciona lo que te vas a llevar:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-    elif data == "inicio":
-        await start(update, context)
-
-    elif data == "perfil":
-        keyboard = [[InlineKeyboardButton("⬅️ Volver al Inicio", callback_data="inicio")]]
-        await query.edit_message_text(
-            f"👤 **TU PERFIL DE COMPRADOR**\n\n"
-            f"Nombre: {datos_usuario['nombre']}\n"
-            f"🆔 ID de Telegram: `{datos_usuario['id_cuenta']}`\n"
-            f"💰 Saldo Actual: ${datos_usuario['saldo']:.2f} USD",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
-
-async def comando_dar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID:
-        return
-
-    args = context.args
-    if len(args) < 2:
-        await update.message.reply_text("⚠️ Uso correcto: `/dar [ID_TELEGRAM] [MONTO]`", parse_mode="Markdown")
-        return
-    
-    id_buscado_str = args[0]
-    try:
-        monto = float(args[1])
-        id_buscado = int(id_buscado_str)
-    except ValueError:
-        await update.message.reply_text("❌ El ID y el monto deben ser numéricos válidos.")
-        return
-
-    if id_buscado in DB_USUARIOS:
-        DB_USUARIOS[id_buscado]["saldo"] += monto
-        nombre_cliente = DB_USUARIOS[id_buscado]["nombre"]
-    else:
-        DB_USUARIOS[id_buscado] = {
-            "nombre": "Usuario Externo",
-            "id_cuenta": id_buscado_str,
-            "saldo": monto
-        }
-        nombre_cliente = "Usuario Externo"
-
-    nuevo_saldo = DB_USUARIOS[id_buscado]["saldo"]
-    await update.message.reply_text(
-        f"✅ ¡Éxito!\nSe han añadido ${monto:.2f} USD al usuario **{nombre_cliente}** (ID: `{id_buscado_str}`).\nNuevo saldo: ${nuevo_saldo:.2f} USD",
+    await message.reply_text(
+        "👋 ¡Bienvenido a **Rayo Store**!\n\nSelecciona una de las opciones del menú:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-def main():
-    app = ApplicationBuilder().token("8717156909:AAFU4M2eeJpgIBCcjzNfdLx-CoQQE6gJr5Y").build()
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("dar", comando_dar))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    
-    print("Bot optimizado y ultrarrápido listo...")
-    app.run_polling()
+# --- MANEJADOR DE BOTONES (CALLBACKS) ---
+@app.on_callback_query()
+async def callback_handler(client, callback_query):
+    data = callback_query.data
+    user_id = callback_query.from_user.id
 
-if __name__ == '__main__':
-    main()
-        
+    try:
+        # 1. Menú Principal / Inicio
+        if data == "inicio":
+            keyboard = [
+                [InlineKeyboardButton("📂 VER CATÁLOGO", callback_data="ver_catalogo")],
+                [InlineKeyboardButton("💳 MIS CRÉDITOS", callback_data="ver_mis_creditos")],
+                [InlineKeyboardButton("⚙️ PANEL", callback_data="abrir_panel")]
+            ]
+            await callback_query.message.edit_text(
+                "👋 ¡Bienvenido a **Rayo Store**!\n\nSelecciona una de las opciones del menú:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+
+        # 2. Catálogo Principal (Android e iOS)
+        elif data == "ver_catalogo":
+            keyboard = [
+                [InlineKeyboardButton("🤖 ANDROID", callback_data="cat_android")],
+                [InlineKeyboardButton("🍏 IOS", callback_data="cat_ios")],
+                [InlineKeyboardButton("⬅️ Regresar al Inicio", callback_data="inicio")]
+            ]
+            await callback_query.message.edit_text(
+                "📂 **TENEMOS PRODUCTOS FULL PRINCIPAL** 🎮\nSelecciona tu sistema operativo:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+
+        # 3. Categoría Android
+        elif data == "cat_android":
+            keyboard = [
+                [InlineKeyboardButton("📦 DRIP CLIENT APK MOD", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 DRIP CLIENT PROXY", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 HG CHEATS", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 HOLO VIP", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 CUBAN PROXY", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 CUBAN APK MOD", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 HG CHEATS PROXY", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 FFH4X", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 BR MODS", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 Strick BR", callback_data="comprar_prod")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")]
+            ]
+            await callback_query.message.edit_text(
+                "🤖 **PRODUCTOS ANDROID** 📱\n\nElige tu producto:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+
+        # 4. Categoría iOS
+        elif data == "cat_ios":
+            keyboard = [
+                [InlineKeyboardButton("📦 MONITE PRO", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 MONITE BASICO", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 CERTIFICADOS", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 PROXY POTATSO", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 ESIG ANUAL", callback_data="comprar_prod")],
+                [InlineKeyboardButton("📦 FLUCK IOS", callback_data="comprar_prod")],
+                [InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")]
+            ]
+            await callback_query.message.edit_text(
+                "🍏 **PRODUCTOS IOS** 🍎\n\nElige tu producto:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+
+        # 5. Aviso de compra o selección de producto
+        elif data == "comprar_prod":
+            keyboard = [[InlineKeyboardButton("⬅️ Volver al Catálogo", callback_data="ver_catalogo")]]
+            await callback_query.message.edit_text(
+                "🛒 Para adquirir este producto, contacta con soporte o utiliza tus créditos disponibles.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        # 6. Ver Créditos del usuario
+        elif data == "ver_mis_creditos":
+            saldo = USER_CREDITS.get(user_id, 0)
+            keyboard = [[InlineKeyboardButton("⬅️ Volver al Inicio", callback_data="inicio")]]
+            await callback_query.message.edit_text(
+                f"💳 Tu saldo actual es de: **{saldo} créditos**.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="Markdown"
+            )
+
+        # 7. Botón del Panel general
+        elif data == "abrir_panel":
+            if user_id == OWNER_ID:
+                keyboard = [
+                    [InlineKeyboardButton("➕ Agregar Admin", callback_data="owner_add_admin")],
+                    [InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins")],
+                    [InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu")],
+                    [InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")]
+                ]
+                await callback_query.message.edit_text("👑 **PANEL DE OWNER**\n\nSelecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
+            elif user_id in ADMINS_IDS:
+                keyboard = [
+                    [InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins")],
+                    [InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu")],
+                    [InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")]
+                ]
+                await callback_query.message.edit_text("🛡️ **PANEL DE ADMINISTRADOR**\n\nSelecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                await callback_query.answer("❌ No tienes permisos para abrir el panel.", show_alert=True)
+
+        # 8. Submenús del Panel de Admin / Owner
+        elif data == "owner_add_admin":
+            if user_id != OWNER_ID:
+                return
+            keyboard = [[InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel")]]
+            await callback_query.message.edit_text(
+                "➕ **AGREGAR NUEVO ADMIN**\n\nEnvíame el comando por chat privado:\n`/addadmin ID_DEL_USUARIO`",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        elif data == "owner_list_admins":
+            if user_id != OWNER_ID and user_id not in ADMINS_IDS:
+                return
+            admins_text = "\n".join([str(aid) for aid in ADMINS_IDS]) if ADMINS_IDS else "No hay administradores registrados."
+            keyboard = [[InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel")]]
+            await callback_query.message.edit_text(f"📋 **LISTA DE ADMINISTRADORES:**\n\n{admins_text}", reply_markup=InlineKeyboardMarkup(keyboard))
+
+        elif data == "admin_credits_menu":
+            if user_id != OWNER_ID and user_id not in ADMINS_IDS:
+                return
+            keyboard = [
+                [InlineKeyboardButton("➕ Dar Créditos (Usa /darcreditos ID MONTO)", callback_data="abrir_panel")],
+                [InlineKeyboardButton("➖ Quitar Créditos (Usa /quitarcreditos ID MONTO)", callback_data="abrir_panel")],
+                [InlineKeyboardButton("⬅️ Volver al Panel", callback_data="abrir_panel")]
+            ]
+            await callback_query.message.edit_text(
+                "💰 **GESTIÓN DE CRÉDITOS**\n\nUsa los comandos directos en el chat:\n• `/darcreditos ID MONTO`\n• `/quitarcreditos ID MONTO`",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        elif data == "cerrar":
+            await callback_query.message.delete()
+            
+    except Exception as e:
+        # Evita que el bot se caiga si el usuario presiona un botón idéntico
+        try:
+            await callback_query.answer()
+        except:
+            pass
+
+
+# --- COMANDOS DE TEXTO PARA PANEL Y CREDITO ---
+
+@app.on_message(filters.command("panel") & filters.private)
+async def panel_command(client, message):
+    user_id = message.from_user.id
+    if user_id == OWNER_ID:
+        keyboard = [
+            [InlineKeyboardButton("➕ Agregar Admin", callback_data="owner_add_admin")],
+            [InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins")],
+            [InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu")],
+            [InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")]
+        ]
+        await message.reply_text("👑 **PANEL DE OWNER**\n\nSelecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif user_id in ADMINS_IDS:
+        keyboard = [
+            [InlineKeyboardButton("📋 Ver Lista de Admins", callback_data="owner_list_admins")],
+            [InlineKeyboardButton("💰 Gestionar Créditos", callback_data="admin_credits_menu")],
+            [InlineKeyboardButton("❌ Cerrar Panel", callback_data="cerrar")]
+        ]
+        await message.reply_text("🛡️ **PANEL DE ADMINISTRADOR**\n\nSelecciona una opción:", reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await message.reply_text("❌ No tienes permisos para usar este comando.")
+
+@app.on_message(filters.command("addadmin") & filters.private)
+async def addadmin_command(client, message):
+    if message.from_user.id != OWNER_ID:
+        return
+    try:
+        nuevo_id = int(message.text.split()[1])
+        if nuevo_id not in ADMINS_IDS:
+            ADMINS_IDS.append(nuevo_id)
+            await message.reply_text(f"✅ ¡Usuario `{nuevo_id}` agregado como Admin exitosamente!")
+        else:
+            await message.reply_text("⚠️ Ese usuario ya es administrador.")
+    except (IndexError, ValueError):
+        await message.reply_text("❌ Uso incorrecto. Ejemplo: `/addadmin 123456789`")
+
+@app.on_message(filters.command("darcreditos") & filters.private)
+async def darcreditos_command(client, message):
+    user_id = message.from_user.id
+    if user_id != OWNER_ID and user_id not in ADMINS_IDS:
+        return
+    try:
+        partes = message.text.split()
+        target_id = int(partes[1])
+        cantidad = int(partes[2])
+        USER_CREDITS[target_id] = USER_CREDITS.get(target_id, 0) + cantidad
+        saldo_actual = USER_CREDITS[target_id]
+        await message.reply_text(f"✅ Agregados **{cantidad} créditos** al usuario `{target_id}`.\nSaldo total: **{saldo_actual}**.")
+    except (IndexError, ValueError):
+        await message.reply_text("❌ Uso incorrecto. Ejemplo: `/darcreditos 123456789 50`")
+
+@app.on_message(filters.command("quitarcreditos") & filters.private)
+async def quitarcreditos_command(client, message):
+    user_id = message.from_user.id
+    if user_id != OWNER_ID and user_id not in ADMINS_IDS:
+        return
+    try:
+        partes = message.text.split()
+        target_id = int(partes[1])
+        cantidad = int(partes[2])
+        saldo_actual = USER_CREDITS.get(target_id, 0)
+        nuevos_creditos = max(0, saldo_actual - cantidad)
+        USER_CREDITS[target_id] = nuevos_creditos
+        await message.reply_text(f"⚠️ Retirados **{cantidad} créditos** al usuario `{target_id}`.\nSaldo actual: **{nuevos_creditos}**.")
+    except (IndexError, ValueError):
+        await message.reply_text("❌ Uso incorrecto. Ejemplo: `/quitarcreditos 123456789 20`")
+
+@app.on_message(filters.command("miscreditos") & filters.private)
+async def miscreditos_command(client, message):
+    saldo = USER_CREDITS.get(message.from_user.id, 0)
+    await message.reply_text(f"💳 Tu saldo actual es de: **{saldo} créditos**.")
+
+if __name__ == "__main__":
+    print("El bot y el servidor web están iniciando...")
+    app.run()
+            
