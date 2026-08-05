@@ -54,7 +54,6 @@ async def cmd_start(message: types.Message):
 
 @dp.message_handler()
 async def echo_all_messages(message: types.Message):
-    # Esto asegura que cada vez que escribas algo al bot, te responda mostrando tu menú
     await message.answer(
         f"📩 Recibí tu mensaje: *{message.text}*\n\nSelecciona una opción del menú:",
         reply_markup=main_menu(),
@@ -106,7 +105,7 @@ async def process_callback(callback_query: types.CallbackQuery):
                 InlineKeyboardButton("📦 BR MODS", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 Strick BR", callback_data="comprar_prod"),
                 InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")
-            ]
+            )
             await bot.edit_message_text(
                 "🤖 **PRODUCTOS ANDROID** 📱\n\nElige tu producto:",
                 chat_id=callback_query.message.chat.id,
@@ -125,7 +124,7 @@ async def process_callback(callback_query: types.CallbackQuery):
                 InlineKeyboardButton("📦 ESIG ANUAL", callback_data="comprar_prod"),
                 InlineKeyboardButton("📦 FLUCK IOS", callback_data="comprar_prod"),
                 InlineKeyboardButton("⬅️ Volver", callback_data="ver_catalogo")
-            ]
+            )
             await bot.edit_message_text(
                 "🍏 **PRODUCTOS IOS** 🍎\n\nElige tu producto:",
                 chat_id=callback_query.message.chat.id,
