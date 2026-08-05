@@ -382,3 +382,249 @@ Selecciona una opción.
             callback.from_user.id
         )
 )
+# ==========================================
+# PREMIUM
+# ==========================================
+
+@router.callback_query(F.data == "premium")
+async def premium(callback: CallbackQuery):
+
+    await callback.answer()
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Comprar Premium",
+                    callback_data="buy_premium"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Inicio",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_caption(
+        caption="""
+<b>💎 RAYO FIX PREMIUM</b>
+
+✅ Descuentos exclusivos
+
+✅ Atención prioritaria
+
+✅ Acceso anticipado a nuevos productos
+
+💰 Contacta con soporte para activarlo.
+""",
+        reply_markup=keyboard
+    )
+
+
+# ==========================================
+# RECARGAS
+# ==========================================
+
+@router.callback_query(F.data == "recharge")
+async def recharge(callback: CallbackQuery):
+
+    await callback.answer()
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📞 Contactar Soporte",
+                    url=SUPPORT_URL
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Inicio",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_caption(
+        caption="""
+<b>💳 RECARGAR SALDO</b>
+
+Métodos disponibles:
+
+• Yape
+• Plin
+• Binance
+• USDT
+
+Después del pago envía tu comprobante al soporte.
+""",
+        reply_markup=keyboard
+    )
+
+
+# ==========================================
+# CUPONES
+# ==========================================
+
+@router.callback_query(F.data == "coupon")
+async def coupon(callback: CallbackQuery):
+
+    await callback.answer()
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🏠 Inicio",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_caption(
+        caption="""
+<b>🎟️ CUPONES</b>
+
+Esta función estará disponible próximamente.
+
+Podrás canjear códigos promocionales.
+""",
+        reply_markup=keyboard
+    )
+
+
+# ==========================================
+# HISTORIAL
+# ==========================================
+
+@router.callback_query(F.data == "history")
+async def history(callback: CallbackQuery):
+
+    await callback.answer()
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🏠 Inicio",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
+
+    await callback.message.edit_caption(
+        caption="""
+<b>📦 MIS COMPRAS</b>
+
+Todavía no tienes compras registradas.
+""",
+        reply_markup=keyboard
+    )
+
+
+# ==========================================
+# OWNER
+# ==========================================
+
+@router.callback_query(F.data == "owner")
+async def owner(callback: CallbackQuery):
+
+    if callback.from_user.id != OWNER_ID:
+        await callback.answer("Acceso denegado", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="💰 Dar Saldo", callback_data="owner_add")
+            ],
+            [
+                InlineKeyboardButton(text="💸 Quitar Saldo", callback_data="owner_remove")
+            ],
+            [
+                InlineKeyboardButton(text="📊 Estadísticas", callback_data="owner_stats")
+            ],
+            [
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="home")
+            ]
+        ]
+    )
+
+    await callback.answer()
+
+    await callback.message.edit_caption(
+        caption="<b>👑 PANEL OWNER</b>",
+        reply_markup=keyboard
+    )
+
+
+# ==========================================
+# ADMIN
+# ==========================================
+
+@router.callback_query(F.data == "admin")
+async def admin(callback: CallbackQuery):
+
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Acceso denegado", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📊 Estadísticas",
+                    callback_data="admin_stats"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🏠 Inicio",
+                    callback_data="home"
+                )
+            ]
+        ]
+    )
+
+    await callback.answer()
+
+    await callback.message.edit_caption(
+        caption="<b>⚙️ PANEL ADMIN</b>",
+        reply_markup=keyboard
+    )
+
+
+# ==========================================
+# ESTADÍSTICAS OWNER
+# ==========================================
+
+@router.callback_query(F.data == "owner_stats")
+async def owner_stats(callback: CallbackQuery):
+
+    await callback.answer()
+
+    await callback.message.edit_caption(
+        caption=f"""
+<b>📊 ESTADÍSTICAS</b>
+
+👥 Usuarios registrados:
+<b>{total_users()}</b>
+""",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="⬅️ Volver",
+                        callback_data="owner"
+                    )
+                ]
+            ]
+        )
+    )
