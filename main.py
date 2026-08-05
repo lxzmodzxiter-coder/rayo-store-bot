@@ -15,7 +15,6 @@ def home():
     return "¡Rayo Store Bot está activo y funcionando perfectamente!"
 
 def run_web():
-    # Render asigna un puerto mediante la variable de entorno 'PORT', si no hay usa el 8080
     import os
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
@@ -24,12 +23,12 @@ def run_web():
 Thread(target=run_web).start()
 # -------------------------------------------------------------
 
-# Configuración del Bot
+# Configuración del Bot con tus credenciales oficiales
 app = Client(
     "rayo_store_bot",
-    api_id=123456,  # Pon tu api_id si lo manejas directo
-    api_hash="tu_api_hash",
-    bot_token="8717156989:AAFrMR2eeJpgGBCojzNfdLx-CoQQE6gJRSY"  # Token del bot
+    api_id=38961296,
+    api_hash="ff178285b739a05289139f74f397a3ba",
+    bot_token="8717156989:AAFrMR2eeJpgGBCojzNfdLx-CoQQE6gJRSY"
 )
 
 # Tu ID configurado como Owner principal 👑
@@ -196,12 +195,10 @@ async def callback_handler(client, callback_query):
             await callback_query.message.delete()
             
     except Exception as e:
-        # Evita que el bot se caiga si el usuario presiona un botón idéntico
         try:
             await callback_query.answer()
         except:
             pass
-
 
 # --- COMANDOS DE TEXTO PARA PANEL Y CREDITO ---
 
@@ -279,4 +276,4 @@ async def miscreditos_command(client, message):
 if __name__ == "__main__":
     print("El bot y el servidor web están iniciando...")
     app.run()
-            
+                
