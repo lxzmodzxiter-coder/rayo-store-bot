@@ -1,8 +1,8 @@
 import os, sqlite3, time, logging
 from threading import Thread
 from flask import Flask
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 logging.basicConfig(level=logging.INFO)
 w = Flask(__name__)
@@ -16,7 +16,7 @@ Thread(target=lambda: w.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080
 TOKEN = os.getenv("BOT_TOKEN", "8799688315:AAH3afiU9b8RdEuWtCtj3ooBTopEgaJMFFg")
 OWNER_ID = int(os.getenv("OWNER_ID", "7939709543"))
 bot = Bot(token=TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 BANNER = "https://i.ibb.co/3m20gX28/51614.jpg"
 
 def db():
@@ -50,16 +50,23 @@ def esta_baneado(u):
     return r and r[0] == 1
 
 def menu_principal(u):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛍️ Catálogo", callback_data="cat"), InlineKeyboardButton(text="👤 Perfil", callback_data="per")],
-        [InlineKeyboardButton(text="💳 Recargar", callback_data="rec"), InlineKeyboardButton(text="🎟️ Cupones", callback_data="cup")],
-        [InlineKeyboardButton(text="💎 Premium", callback_data="pre"), InlineKeyboardButton(text="📦 Mis Compras", callback_data="com")],
-        [InlineKeyboardButton(text="📞 Soporte", url="https://t.me/StoreFixersXiters"), InlineKeyboardButton(text="📢 Canal", url="https://t.me/StoreFixersXiters")]
-    ])
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton(text="🛍️ Catálogo", callback_data="cat"),
+        InlineKeyboardButton(text="👤 Perfil", callback_data="per"),
+        InlineKeyboardButton(text="💳 Recargar", callback_data="rec"),
+        InlineKeyboardButton(text="🎟️ Cupones", callback_data="cup"),
+        InlineKeyboardButton(text="💎 Premium", callback_data="pre"),
+        InlineKeyboardButton(text="📦 Mis Compras", callback_data="com")
+    )
+    kb.row(
+        InlineKeyboardButton(text="📞 Soporte", url="https://t.me/StoreFixersXiters"),
+        InlineKeyboardButton(text="📢 Canal", url="https://t.me/StoreFixersXiters")
+    )
     if u == OWNER_ID:
-        kb.inline_keyboard.append([InlineKeyboardButton(text="👑 Panel Owner", callback_data="po")])
+        kb.add(InlineKeyboardButton(text="👑 Panel Owner", callback_data="po"))
     elif es_admin(u):
-        kb.inline_keyboard.append([InlineKeyboardButton(text="⚙️ Panel Admin", callback_data="pa")])
+        kb.add(InlineKeyboardButton(text="⚙️ Panel Admin", callback_data="pa"))
     return kb
 
 def texto_inicio(u, f):
@@ -85,15 +92,15 @@ def texto_inicio(u, f):
 async def actualizar(q, txt, mk):
     try:
         msg = q.message
-        if msg.photo:
+        if msg.content_type == 'photo':
             await bot.edit_message_caption(chat_id=msg.chat.id, message_id=msg.message_id, caption=txt, reply_markup=mk, parse_mode="Markdown")
         else:
             await bot.edit_message_text(chat_id=msg.chat.id, message_id=msg.message_id, text=txt, reply_markup=mk, parse_mode="Markdown")
     except Exception:
         pass
 
-@dp.message(F.text.startswith("/start"))
-async def start_cmd(m: Message):
+@dp.message_handler(commands=['start'])
+async def start_cmd(m: types.Message):
     u = m.from_user.id
     if esta_baneado(u):
         await m.answer("❌ Tu cuenta está suspendida.")
@@ -109,8 +116,8 @@ async def start_cmd(m: Message):
     except Exception:
         await m.answer(texto_inicio(u, f), reply_markup=menu_principal(u), parse_mode="Markdown")
 
-@dp.callback_query()
-async def callbacks(q: CallbackQuery):
+@dp.callback_query_handler(lambda c: True)
+async def callbacks(q: types.CallbackQuery):
     await q.answer()
     u = q.from_user.id
     if esta_baneado(u):
@@ -121,30 +128,37 @@ async def callbacks(q: CallbackQuery):
         if dt == "inicio":
             await actualizar(q, texto_inicio(u, f), menu_principal(u))
         elif dt == "cat":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📱 Android", callback_data="ca_Android")],
-                [InlineKeyboardButton(text="🍎 iPhone / iOS", callback_data="ca_iOS")],
-                [InlineKeyboardButton(text="🖥️ Windows / PC", callback_data="ca_PC")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton(text="📱 Android", callback_data="ca_Android"),
+                InlineKeyboardButton(text="🍎 iPhone / iOS", callback_data="ca_iOS"),
+                InlineKeyboardButton(text="🖥️ Windows / PC", callback_data="ca_PC"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             await actualizar(q, "📂 **CATÁLOGO**\n\nElige categoría:", kb)
         elif dt.startswith("ca_"):
             cg = dt.split("_")[1]
             if cg == "PC":
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⬅️ Atrás", callback_data="cat")],
-                    [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-                ])
+                kb = InlineKeyboardMarkup(row_width=1)
+                kb.add(
+                    InlineKeyboardButton(text="⬅️ Atrás", callback_data="cat"),
+                    InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+                )
                 return await actualizar(q, "🖥️ **WINDOWS / PC**\n\n🚧 Próximamente...", kb)
             conn = sqlite3.connect("r.db")
             cursor = conn.cursor()
             cursor.execute("SELECT id, nombre, precio FROM p WHERE cat=?", (cg,))
             ps = cursor.fetchall()
             conn.close()
-            kb = [[InlineKeyboardButton(text=f"📦 {n} - ${p:.2f}", callback_data=f"vp_{i}")] for i, n, p in ps]
-            kb.append([InlineKeyboardButton(text="⬅️ Atrás", callback_data="cat"), InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")])
+            kb = InlineKeyboardMarkup(row_width=1)
+            for i, n, p in ps:
+                kb.add(InlineKeyboardButton(text=f"📦 {n} - ${p:.2f}", callback_data=f"vp_{i}"))
+            kb.add(
+                InlineKeyboardButton(text="⬅️ Atrás", callback_data="cat"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             txt = f"📂 **CATEGORÍA: {cg.upper()}**\n\nSelecciona producto:" if ps else f"📂 **CATEGORÍA: {cg.upper()}**\n\n⚠️ Sin stock disponible."
-            await actualizar(q, txt, InlineKeyboardMarkup(inline_keyboard=kb))
+            await actualizar(q, txt, kb)
         elif dt.startswith("vp_"):
             pid = int(dt.split("_")[1])
             conn = sqlite3.connect("r.db")
@@ -154,10 +168,12 @@ async def callbacks(q: CallbackQuery):
             conn.close()
             if pr:
                 n, p, ds, st, cg = pr
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=f"🛒 Comprar (${p:.2f})", callback_data=f"cp_{pid}")],
-                    [InlineKeyboardButton(text="⬅️ Atrás", callback_data=f"ca_{cg}"), InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-                ])
+                kb = InlineKeyboardMarkup(row_width=1)
+                kb.add(
+                    InlineKeyboardButton(text=f"🛒 Comprar (${p:.2f})", callback_data=f"cp_{pid}"),
+                    InlineKeyboardButton(text="⬅️ Atrás", callback_data=f"ca_{cg}"),
+                    InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+                )
                 await actualizar(q, f"📦 **{n}**\n\n📝 {ds}\n💰 `${p:.2f} USD`\n📦 Stock: `{st}`", kb)
         elif dt.startswith("cp_"):
             pid = int(dt.split("_")[1])
@@ -184,7 +200,7 @@ async def callbacks(q: CallbackQuery):
                     except Exception:
                         pass
             conn.close()
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, "🎉 ¡Gracias por tu compra!", kb)
         elif dt == "per":
             conn = sqlite3.connect("r.db")
@@ -195,16 +211,16 @@ async def callbacks(q: CallbackQuery):
             tc = cursor.fetchone()[0]
             conn.close()
             sd, rg, pm, reg_dt = (r[0] if r else 0, r[1] if r else "Cliente", "Sí" if (r and r[2] == 1) else "No", r[3] if r else "")
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, f"👤 **PERFIL**\n\n• Nombre: {f}\n• ID: `{u}`\n• Saldo: `${sd:.2f}`\n• Membresía: {pm}\n• Compras: {tc}\n• Registro: {reg_dt}", kb)
         elif dt == "rec":
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, "💳 **RECARGA**\n\nYape / Plin / Binance Pay / USDT.\nEnvía tu comprobante al soporte con tu ID.", kb)
         elif dt == "cup":
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, "🎟️ **CUPÓN**\n\nEnvía tu código promocional a soporte.", kb)
         elif dt == "pre":
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, "💎 **PREMIUM**\n\nObtén 10% de descuento y beneficios exclusivos comunicándote con soporte.", kb)
         elif dt == "com":
             conn = sqlite3.connect("r.db")
@@ -213,23 +229,27 @@ async def callbacks(q: CallbackQuery):
             cs = cursor.fetchall()
             conn.close()
             tx = "📦 **HISTORIAL**\n\n" + ("\n".join([f"• {pr} - ${prc:.2f} ({dt_c})" for pr, prc, dt_c in cs]) if cs else "No tienes compras.")
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, tx, kb)
         elif dt == "po":
             if u != OWNER_ID:
                 return
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="➕ Agregar Prod", callback_data="oa"), InlineKeyboardButton(text="🗑️ Eliminar Prod", callback_data="od")],
-                [InlineKeyboardButton(text="💰 Dar Saldo", callback_data="os"), InlineKeyboardButton(text="🛡️ Dar Admin", callback_data="oa_d")],
-                [InlineKeyboardButton(text="📊 Estadísticas", callback_data="ost")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=2)
+            kb.add(
+                InlineKeyboardButton(text="➕ Agregar Prod", callback_data="oa"),
+                InlineKeyboardButton(text="🗑️ Eliminar Prod", callback_data="od"),
+                InlineKeyboardButton(text="💰 Dar Saldo", callback_data="os"),
+                InlineKeyboardButton(text="🛡️ Dar Admin", callback_data="oa_d"),
+                InlineKeyboardButton(text="📊 Estadísticas", callback_data="ost")
+            )
+            kb.add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, "👑 **PANEL OWNER**", kb)
         elif dt == "oa":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Atrás", callback_data="po")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton(text="⬅️ Atrás", callback_data="po"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             await actualizar(q, "➕ **AGREGAR PRODUCTO**\n\nUsa en el chat:\n`/addprod Categoria Nombre Precio Stock Descripcion`", kb)
         elif dt == "od":
             conn = sqlite3.connect("r.db")
@@ -237,9 +257,14 @@ async def callbacks(q: CallbackQuery):
             cursor.execute("SELECT id, nombre FROM p")
             ps = cursor.fetchall()
             conn.close()
-            kb = [[InlineKeyboardButton(text=f"❌ {n}", callback_data=f"dp_{i}")] for i, n in ps]
-            kb.append([InlineKeyboardButton(text="⬅️ Atrás", callback_data="po"), InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")])
-            await actualizar(q, "🗑️ **ELIMINAR PRODUCTO**\n\nSelecciona el producto:", InlineKeyboardMarkup(inline_keyboard=kb))
+            kb = InlineKeyboardMarkup(row_width=1)
+            for i, n in ps:
+                kb.add(InlineKeyboardButton(text=f"❌ {n}", callback_data=f"dp_{i}"))
+            kb.add(
+                InlineKeyboardButton(text="⬅️ Atrás", callback_data="po"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
+            await actualizar(q, "🗑️ **ELIMINAR PRODUCTO**\n\nSelecciona el producto:", kb)
         elif dt.startswith("dp_"):
             pid = int(dt.split("_")[1])
             conn = sqlite3.connect("r.db")
@@ -248,19 +273,21 @@ async def callbacks(q: CallbackQuery):
             conn.commit()
             conn.close()
             await q.answer("✅ Eliminado.", show_alert=True)
-            kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]])
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio"))
             await actualizar(q, "✅ Producto eliminado con éxito.", kb)
         elif dt == "os":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Atrás", callback_data="po")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton(text="⬅️ Atrás", callback_data="po"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             await actualizar(q, "💰 **DAR SALDO**\n\nUsa en el chat:\n`/darsaldo ID_USUARIO MONTO`", kb)
         elif dt == "oa_d":
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Atrás", callback_data="po")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton(text="⬅️ Atrás", callback_data="po"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             await actualizar(q, "🛡️ **DAR ADMIN**\n\nUsa en el chat:\n`/daradmin ID_USUARIO`", kb)
         elif dt == "ost":
             conn = sqlite3.connect("r.db")
@@ -273,24 +300,26 @@ async def callbacks(q: CallbackQuery):
             res = cursor.fetchone()
             v, ig = res[0] or 0, res[1] or 0.0
             conn.close()
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Atrás", callback_data="po")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton(text="⬅️ Atrás", callback_data="po"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             await actualizar(q, f"📊 **ESTADÍSTICAS**\n\n👥 Usuarios: `{tu}`\n💎 Premium: `{tp}`\n📦 Ventas: `{v}`\n💵 Ingresos: `${ig:.2f}`", kb)
         elif dt == "pa":
             if not es_admin(u):
                 return
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💰 Dar Saldo", callback_data="os")],
-                [InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")]
-            ])
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton(text="💰 Dar Saldo", callback_data="os"),
+                InlineKeyboardButton(text="🏠 Inicio", callback_data="inicio")
+            )
             await actualizar(q, "⚙️ **PANEL ADMIN**", kb)
     except Exception:
         pass
 
-@dp.message(F.text.startswith("/addprod"))
-async def addprod_cmd(m: Message):
+@dp.message_handler(commands=['addprod'])
+async def addprod_cmd(m: types.Message):
     if m.from_user.id != OWNER_ID:
         return
     try:
@@ -304,8 +333,8 @@ async def addprod_cmd(m: Message):
     except Exception:
         await m.reply("❌ Formato incorrecto. Uso:\n`/addprod Android DripMod 5.00 10 APK Mod`", parse_mode="Markdown")
 
-@dp.message(F.text.startswith("/darsaldo"))
-async def darsaldo_cmd(m: Message):
+@dp.message_handler(commands=['darsaldo'])
+async def darsaldo_cmd(m: types.Message):
     if not es_admin(m.from_user.id):
         return
     try:
@@ -320,8 +349,8 @@ async def darsaldo_cmd(m: Message):
     except Exception:
         await m.reply("❌ Uso incorrecto. Ejemplo:\n`/darsaldo 123456789 10`", parse_mode="Markdown")
 
-@dp.message(F.text.startswith("/daradmin"))
-async def daradmin_cmd(m: Message):
+@dp.message_handler(commands=['daradmin'])
+async def daradmin_cmd(m: types.Message):
     if m.from_user.id != OWNER_ID:
         return
     try:
@@ -337,10 +366,6 @@ async def daradmin_cmd(m: Message):
         await m.reply("❌ Uso incorrecto. Ejemplo:\n`/daradmin 123456789`", parse_mode="Markdown")
 
 if __name__ == "__main__":
-    import asyncio
-    while True:
-        try:
-            asyncio.run(dp.start_polling(bot, skip_updates=True))
-        except Exception:
-            time.sleep(15)
-             
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
+            
