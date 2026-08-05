@@ -6,7 +6,7 @@ from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Configuración detallada de logs para ver qué pasa en la consola de Render
+# Configuración detallada de logs
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -24,8 +24,8 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 # -------------------------------------------------------------
 
-# Token oficial de tu bot actualizado
-TOKEN = "8717156909:AAH7zXtwD7gKcvdFPI62VlTyI0AN61MhAzc"
+# Nuevo Token oficial limpio de tu bot
+TOKEN = "8799688315:AAH3afiU9b8RdEuWtCtj3ooBTopEgaJMFFg"
 OWNER_ID = 7939709543
 
 logger.info("Esperando 5 segundos antes de inicializar el bot...")
@@ -289,4 +289,4 @@ if __name__ == "__main__":
     from aiogram import executor
     logger.info("Iniciando polling del bot...")
     executor.start_polling(dp, skip_updates=True)
-            
+    
