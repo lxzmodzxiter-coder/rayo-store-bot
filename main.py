@@ -966,7 +966,7 @@ async def cb_owner_admins(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🏠 Inicio", callback_data="main_menu"), InlineKeyboardButton(text="⬅️ Atrás", callback_data="owner_panel")]
     ])
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
 @router.callback_query(F.data == "owner_security")
