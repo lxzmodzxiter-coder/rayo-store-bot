@@ -1165,3 +1165,2220 @@ async def cb_channel(callback: CallbackQuery):
         kb
     )
     await callback.answer()
+@router.callback_query(F.data == "menu_profile")
+async def cb_profile(callback: CallbackQuery):
+    u = db_get_user(callback.from_user.id)
+    if not u:
+        await callback.answer("❌ Usuario no encontrado.", show_alert=True)
+        return
+    username = f"@{u[2]}" if u[2] and u[2] != "Sin username" else "Sin username"
+    text = (
+        "👤 **MI PERFIL**\n\n"
+        f"📌 Nombre: {u[1]}\n"
+        f"🔖 Usuario: {username}\n"
+        f"🆔 ID: `{u[0]}`\n"
+        f"💰 Saldo: ${u[4]:.2f}\n"
+        f"💎 Premium: {'✅ Activo' if u[5] else '❌ Inactivo'}\n"
+        f"📦 Compras: {u[6]}\n"
+        f"📅 Registro: {u[3]}"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_purchases")
+async def cb_my_purchases(callback: CallbackQuery):
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT product_name, price, date, status FROM purchases "
+        "WHERE user_id = ? ORDER BY id DESC LIMIT 15",
+        (callback.from_user.id,)
+    )
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        text = (
+            "📦 **MIS COMPRAS**\n\n"
+            "No tienes compras registradas todavía."
+        )
+    else:
+        items = []
+        for name, price, date, status in rows:
+            items.append(
+                f"🛍️ **{name}**\n"
+                f"💵 ${price:.2f}\n"
+                f"📅 {date}\n"
+                f"📌 {status}"
+            )
+        text = "📦 **MIS COMPRAS**\n\n" + "\n\n".join(items)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_recharge")
+async def cb_recharge(callback: CallbackQuery):
+    text = (
+        "💳 **RECARGAR SALDO**\n\n"
+        "Selecciona el método de pago que deseas utilizar.\n\n"
+        "⚡ Una vez realizado el pago, envía tu comprobante "
+        "para que pueda ser revisado."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🇵🇪 Yape / Plin",
+            callback_data="recharge_yape"
+        )],
+        [InlineKeyboardButton(
+            text="💰 Binance USDT",
+            callback_data="recharge_binance"
+        )],
+        [
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            ),
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "recharge_yape")
+async def cb_recharge_yape(callback: CallbackQuery):
+    text = (
+        "🇵🇪 **RECARGA POR YAPE / PLIN**\n\n"
+        "📱 Número: `903-472-998`\n\n"
+        "💡 Realiza el pago y luego pulsa "
+        "**Enviar Comprobante**."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📤 Enviar Comprobante",
+            callback_data="send_proof"
+        )],
+        [
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            ),
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="menu_recharge"
+            )
+        ]
+    ])
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "recharge_binance")
+async def cb_recharge_binance(callback: CallbackQuery):
+    text = (
+        "💰 **RECARGA POR BINANCE USDT**\n\n"
+        "🌐 Red: TRC20\n"
+        "💳 Wallet: `T_WALLET_EXAMPLE`\n\n"
+        "⚠️ Verifica cuidadosamente la dirección antes "
+        "de realizar el pago."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="📤 Enviar Comprobante",
+            callback_data="send_proof"
+        )],
+        [
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            ),
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="menu_recharge"
+            )
+        ]
+    ])
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "send_proof")
+async def cb_send_proof_prompt(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    await state.set_state(UserStates.waiting_for_recharge_proof)
+    await callback.message.edit_text(
+        "📤 **ENVIAR COMPROBANTE**\n\n"
+        "Envía ahora la **foto de tu comprobante** "
+        "por este chat.\n\n"
+        "📝 El administrador revisará el pago y "
+        "aprobará la recarga.",
+        reply_markup=nav_buttons("menu_recharge"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(UserStates.waiting_for_recharge_proof, F.photo)
+async def process_recharge_proof(
+    message: Message,
+    state: FSMContext
+):
+    photo_id = message.photo[-1].file_id
+    user_id = message.from_user.id
+    date_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO payments "
+        "(user_id, amount, method, proof, status, date) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            0.0,
+            "Pendiente",
+            photo_id,
+            "Pendiente",
+            date_now
+        )
+    )
+    payment_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    await state.clear()
+
+    await message.answer(
+        "✅ **COMPROBANTE RECIBIDO**\n\n"
+        f"🧾 Solicitud: `#{payment_id}`\n"
+        "📌 Estado: **Pendiente**\n\n"
+        "⏳ Tu comprobante será revisado por el equipo.",
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+
+
+@router.message(UserStates.waiting_for_recharge_proof)
+async def invalid_recharge_proof(
+    message: Message,
+    state: FSMContext
+):
+    await message.answer(
+        "⚠️ Debes enviar una **foto del comprobante**.",
+        reply_markup=nav_buttons("menu_recharge"),
+        parse_mode="Markdown"
+    )
+
+
+@router.callback_query(F.data == "menu_coupons")
+async def cb_coupons(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    await state.set_state(UserStates.waiting_for_coupon)
+    await callback.message.edit_text(
+        "🎟️ **CUPÓN DE DESCUENTO**\n\n"
+        "Escribe el código del cupón que deseas utilizar.\n\n"
+        "Ejemplo:\n"
+        "`RAYO10`",
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(UserStates.waiting_for_coupon)
+async def process_coupon(
+    message: Message,
+    state: FSMContext
+):
+    code = message.text.strip().upper() if message.text else ""
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT code, discount_type, value, uses_left, expires_at "
+        "FROM coupons WHERE code = ?",
+        (code,)
+    )
+    coupon = cur.fetchone()
+    conn.close()
+
+    if not coupon:
+        await message.answer(
+            "❌ El cupón no existe o no es válido.",
+            reply_markup=nav_buttons(),
+            parse_mode="Markdown"
+        )
+        return
+
+    expires = coupon[4]
+    if expires:
+        try:
+            exp = datetime.strptime(expires, "%Y-%m-%d %H:%M:%S")
+            if datetime.now() > exp:
+                await message.answer(
+                    "❌ Este cupón ha expirado.",
+                    reply_markup=nav_buttons(),
+                    parse_mode="Markdown"
+                )
+                await state.clear()
+                return
+        except ValueError:
+            pass
+
+    if coupon[3] <= 0:
+        await message.answer(
+            "❌ Este cupón ya no tiene usos disponibles.",
+            reply_markup=nav_buttons(),
+            parse_mode="Markdown"
+        )
+        await state.clear()
+        return
+
+    discount = (
+        f"{coupon[2]:.0f}%"
+        if coupon[1].lower() == "percent"
+        else f"${coupon[2]:.2f}"
+    )
+
+    await state.clear()
+    await message.answer(
+        "✅ **CUPÓN VÁLIDO**\n\n"
+        f"🎟️ Código: `{coupon[0]}`\n"
+        f"💎 Descuento: **{discount}**\n\n"
+        "El descuento será aplicado según las condiciones "
+        "del cupón.",
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+
+
+@router.callback_query(F.data == "menu_premium")
+async def cb_premium(callback: CallbackQuery):
+    u = db_get_user(callback.from_user.id)
+    active = bool(u and u[5])
+
+    if active:
+        text = (
+            "💎 **MEMBRESÍA PREMIUM**\n\n"
+            "🟢 Estado: **ACTIVA**\n\n"
+            "Disfrutas de los beneficios Premium disponibles "
+            "en la tienda."
+        )
+    else:
+        text = (
+            "💎 **MEMBRESÍA PREMIUM**\n\n"
+            "🔴 Estado: **INACTIVA**\n\n"
+            "La membresía Premium te permitirá acceder a "
+            "beneficios especiales de la tienda."
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_support")
+async def cb_support(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "📞 **SOPORTE OFICIAL**\n\n"
+        "¿Necesitas ayuda con una compra, recarga o producto?\n\n"
+        "👨‍💻 Soporte: @RayoFixSupport\n\n"
+        "🕐 Atención según disponibilidad.",
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "menu_channel")
+async def cb_channel(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "📢 **CANAL OFICIAL**\n\n"
+        "Únete al canal para recibir:\n\n"
+        "🆕 Nuevos productos\n"
+        "🔥 Promociones\n"
+        "📢 Avisos importantes\n"
+        "💎 Beneficios especiales\n\n"
+        "🔗 t.me/RayoFixStoreChannel",
+        reply_markup=nav_buttons(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+    @router.callback_query(F.data == "admin_panel")
+async def cb_admin_panel(callback: CallbackQuery):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👥 Usuarios", callback_data="admin_users"),
+            InlineKeyboardButton(text="📦 Productos", callback_data="admin_products")
+        ],
+        [
+            InlineKeyboardButton(text="💳 Pagos", callback_data="admin_payments"),
+            InlineKeyboardButton(text="📊 Estadísticas", callback_data="admin_stats")
+        ],
+        [
+            InlineKeyboardButton(text="📢 Difusión", callback_data="admin_broadcast"),
+            InlineKeyboardButton(text="🎟️ Cupones", callback_data="admin_coupons")
+        ],
+        [
+            InlineKeyboardButton(text="🏠 Inicio", callback_data="main_menu"),
+            InlineKeyboardButton(text="⬅️ Atrás", callback_data="main_menu")
+        ]
+    ])
+
+    await callback.message.edit_text(
+        "⚙️ **PANEL ADMINISTRADOR**\n\n"
+        "Gestiona las funciones autorizadas de la tienda.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_users")
+async def cb_admin_users(callback: CallbackQuery):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ Sin permisos.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, name, username, balance, is_premium, is_banned "
+        "FROM users ORDER BY registered_at DESC LIMIT 30"
+    )
+    users = cur.fetchall()
+
+    cur.execute("SELECT COUNT(*) FROM users")
+    total = cur.fetchone()[0]
+
+    conn.close()
+
+    if not users:
+        text = "👥 **USUARIOS**\n\nNo hay usuarios registrados."
+    else:
+        lines = []
+
+        for user in users:
+            premium = "💎" if user[4] else "👤"
+            banned = "🚫" if user[5] else ""
+            username = (
+                f"@{user[2]}"
+                if user[2] and user[2] != "Sin username"
+                else "Sin username"
+            )
+
+            lines.append(
+                f"{premium} `{user[0]}` • {username} {banned}\n"
+                f"💰 Saldo: ${user[3]:.2f}\n"
+                f"👤 {user[1]}"
+            )
+
+        text = (
+            f"👥 **USUARIOS**\n\n"
+            f"📊 Total registrados: **{total}**\n\n"
+            + "\n\n".join(lines)
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_products")
+async def cb_admin_products(callback: CallbackQuery):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ Sin permisos.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, category, name, price, stock, status "
+        "FROM products ORDER BY id DESC LIMIT 30"
+    )
+    products = cur.fetchall()
+
+    conn.close()
+
+    if not products:
+        text = "📦 **PRODUCTOS**\n\nNo hay productos registrados."
+    else:
+        lines = []
+
+        for product in products:
+            status = str(product[5] or "").lower()
+
+            if status in ("disponible", "activo", "available"):
+                icon = "🟢"
+            else:
+                icon = "🔴"
+
+            lines.append(
+                f"{icon} `{product[0]}` **{product[2]}**\n"
+                f"📂 Categoría: {product[1]}\n"
+                f"💵 Precio: ${product[3]:.2f}\n"
+                f"📦 Stock: {product[4]}\n"
+                f"📌 Estado: {product[5]}"
+            )
+
+        text = "📦 **PRODUCTOS**\n\n" + "\n\n".join(lines)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_stats")
+async def cb_admin_stats(callback: CallbackQuery):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ Sin permisos.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) FROM users")
+    users = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM users WHERE is_premium = 1")
+    premium = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM users WHERE is_banned = 1")
+    banned = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM products")
+    products = cur.fetchone()[0]
+
+    cur.execute("SELECT COALESCE(SUM(stock), 0) FROM products")
+    stock = cur.fetchone()[0] or 0
+
+    cur.execute("SELECT COUNT(*) FROM purchases")
+    sales = cur.fetchone()[0]
+
+    cur.execute("SELECT COALESCE(SUM(price), 0) FROM purchases")
+    revenue = cur.fetchone()[0] or 0
+
+    cur.execute(
+        "SELECT COUNT(*) FROM payments WHERE status = 'Pendiente'"
+    )
+    pending = cur.fetchone()[0]
+
+    conn.close()
+
+    text = (
+        "📊 **ESTADÍSTICAS DE LA TIENDA**\n\n"
+        f"👥 Usuarios: **{users}**\n"
+        f"💎 Usuarios Premium: **{premium}**\n"
+        f"🚫 Usuarios baneados: **{banned}**\n\n"
+        f"📦 Productos: **{products}**\n"
+        f"📊 Stock total: **{stock}**\n\n"
+        f"🛒 Ventas: **{sales}**\n"
+        f"💰 Ingresos: **${revenue:.2f}**\n"
+        f"💳 Pagos pendientes: **{pending}**"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_payments")
+async def cb_admin_payments(callback: CallbackQuery):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ Sin permisos.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, user_id, amount, method, status, date "
+        "FROM payments ORDER BY id DESC LIMIT 20"
+    )
+    payments = cur.fetchall()
+
+    conn.close()
+
+    if not payments:
+        text = "💳 **PAGOS**\n\nNo hay pagos registrados."
+    else:
+        lines = []
+
+        for payment in payments:
+            status = payment[4]
+
+            if status == "Pendiente":
+                icon = "🟡"
+            elif status == "Aprobado":
+                icon = "🟢"
+            else:
+                icon = "🔴"
+
+            lines.append(
+                f"{icon} **Pago #{payment[0]}**\n"
+                f"👤 Usuario: `{payment[1]}`\n"
+                f"💵 Monto: ${payment[2]:.2f}\n"
+                f"💳 Método: {payment[3]}\n"
+                f"📌 Estado: {status}\n"
+                f"📅 Fecha: {payment[5]}"
+            )
+
+        text = "💳 **PAGOS RECIENTES**\n\n" + "\n\n".join(lines)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_coupons")
+async def cb_admin_coupons(callback: CallbackQuery):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ Sin permisos.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT code, discount_type, value, uses_left, expires_at "
+        "FROM coupons ORDER BY code LIMIT 30"
+    )
+    coupons = cur.fetchall()
+
+    conn.close()
+
+    if not coupons:
+        text = "🎟️ **CUPONES**\n\nNo hay cupones registrados."
+    else:
+        lines = []
+
+        for coupon in coupons:
+            discount = (
+                f"{coupon[2]:.0f}%"
+                if coupon[1].lower() == "percent"
+                else f"${coupon[2]:.2f}"
+            )
+
+            expiry = coupon[4] or "Sin vencimiento"
+
+            lines.append(
+                f"🎟️ `{coupon[0]}`\n"
+                f"💎 Descuento: **{discount}**\n"
+                f"🔢 Usos restantes: **{coupon[3]}**\n"
+                f"📅 Vence: {expiry}"
+            )
+
+        text = "🎟️ **CUPONES**\n\n" + "\n\n".join(lines)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_broadcast")
+async def cb_admin_broadcast(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+    if not is_admin_or_owner(callback.from_user.id):
+        await callback.answer("❌ Sin permisos.", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.waiting_for_broadcast)
+
+    await callback.message.edit_text(
+        "📢 **DIFUSIÓN GLOBAL**\n\n"
+        "Envía ahora el mensaje que deseas enviar a todos "
+        "los usuarios registrados.\n\n"
+        "⚠️ Utiliza esta función únicamente para comunicados "
+        "de la tienda.",
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_for_broadcast)
+async def process_admin_broadcast(
+    message: Message,
+    state: FSMContext,
+    bot: Bot
+):
+    if not is_admin_or_owner(message.from_user.id):
+        await state.clear()
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute("SELECT id FROM users WHERE is_banned = 0")
+    users = [row[0] for row in cur.fetchall()]
+
+    conn.close()
+    await state.clear()
+
+    sent = 0
+    failed = 0
+
+    for user_id in users:
+        try:
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+            sent += 1
+        except TelegramAPIError:
+            failed += 1
+
+        await asyncio.sleep(0.03)
+
+    await message.answer(
+        "📢 **DIFUSIÓN FINALIZADA**\n\n"
+        f"✅ Enviados: **{sent}**\n"
+        f"❌ Fallidos: **{failed}**",
+        reply_markup=nav_buttons("admin_panel"),
+        parse_mode="Markdown"
+                            )
+    @router.callback_query(F.data == "owner_panel")
+async def cb_owner_panel(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer(
+            "❌ Esta sección es exclusiva del Owner.",
+            show_alert=True
+        )
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="📊 Dashboard",
+                callback_data="owner_dashboard"
+            ),
+            InlineKeyboardButton(
+                text="👥 Usuarios",
+                callback_data="owner_users"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📦 Productos",
+                callback_data="owner_products"
+            ),
+            InlineKeyboardButton(
+                text="💳 Pagos",
+                callback_data="owner_payments"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⚙️ Administradores",
+                callback_data="owner_admins"
+            ),
+            InlineKeyboardButton(
+                text="🔧 Configuración",
+                callback_data="owner_settings"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🎟️ Cupones",
+                callback_data="owner_coupons"
+            ),
+            InlineKeyboardButton(
+                text="📢 Difusión",
+                callback_data="owner_broadcast"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🛡️ Seguridad",
+                callback_data="owner_security"
+            ),
+            InlineKeyboardButton(
+                text="📜 Registros",
+                callback_data="owner_logs"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            ),
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+
+    await callback.message.edit_text(
+        "👑 **PANEL OWNER**\n\n"
+        "🔐 Acceso máximo del sistema.\n\n"
+        "Desde aquí puedes administrar y configurar "
+        "prácticamente toda la tienda.",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_dashboard")
+async def cb_owner_dashboard(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer(
+            "❌ Acceso denegado.",
+            show_alert=True
+        )
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    queries = {
+        "users": "SELECT COUNT(*) FROM users",
+        "premium": "SELECT COUNT(*) FROM users WHERE is_premium = 1",
+        "banned": "SELECT COUNT(*) FROM users WHERE is_banned = 1",
+        "products": "SELECT COUNT(*) FROM products",
+        "stock": "SELECT COALESCE(SUM(stock), 0) FROM products",
+        "sales": "SELECT COUNT(*) FROM purchases",
+        "revenue": "SELECT COALESCE(SUM(price), 0) FROM purchases",
+        "pending": "SELECT COUNT(*) FROM payments WHERE status = 'Pendiente'",
+        "admins": "SELECT COUNT(*) FROM admins"
+    }
+
+    data = {}
+
+    for key, query in queries.items():
+        cur.execute(query)
+        data[key] = cur.fetchone()[0] or 0
+
+    conn.close()
+
+    text = (
+        "👑 **OWNER DASHBOARD**\n\n"
+        "📈 **RESUMEN DEL SISTEMA**\n\n"
+        f"👥 Usuarios: **{data['users']}**\n"
+        f"💎 Premium: **{data['premium']}**\n"
+        f"🚫 Baneados: **{data['banned']}**\n\n"
+        f"📦 Productos: **{data['products']}**\n"
+        f"📊 Stock total: **{data['stock']}**\n\n"
+        f"🛒 Ventas: **{data['sales']}**\n"
+        f"💰 Ingresos: **${data['revenue']:.2f}**\n"
+        f"💳 Pagos pendientes: **{data['pending']}**\n"
+        f"⚙️ Administradores: **{data['admins']}**"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("owner_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_security")
+async def cb_owner_security(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer(
+            "❌ Acceso denegado.",
+            show_alert=True
+        )
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT COUNT(*) FROM users WHERE is_banned = 1"
+    )
+    banned = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM admins"
+    )
+    admins = cur.fetchone()[0]
+
+    cur.execute(
+        "SELECT COUNT(*) FROM payments WHERE status = 'Pendiente'"
+    )
+    pending = cur.fetchone()[0]
+
+    conn.close()
+
+    text = (
+        "🛡️ **SEGURIDAD DEL SISTEMA**\n\n"
+        f"🚫 Usuarios baneados: **{banned}**\n"
+        f"⚙️ Administradores: **{admins}**\n"
+        f"💳 Pagos pendientes: **{pending}**\n\n"
+        "🔐 El Owner mantiene el control total sobre "
+        "los permisos administrativos."
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("owner_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_users")
+async def cb_owner_users(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer(
+            "❌ Acceso denegado.",
+            show_alert=True
+        )
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, name, username, balance, is_premium, is_banned "
+        "FROM users ORDER BY registered_at DESC LIMIT 50"
+    )
+    users = cur.fetchall()
+
+    cur.execute("SELECT COUNT(*) FROM users")
+    total = cur.fetchone()[0]
+
+    conn.close()
+
+    if not users:
+        text = "👥 **USUARIOS**\n\nNo hay usuarios registrados."
+    else:
+        lines = []
+
+        for user in users:
+            premium = "💎" if user[4] else "👤"
+            banned = "🚫" if user[5] else ""
+            username = (
+                f"@{user[2]}"
+                if user[2] and user[2] != "Sin username"
+                else "Sin username"
+            )
+
+            lines.append(
+                f"{premium} `{user[0]}` • {username} {banned}\n"
+                f"👤 {user[1]}\n"
+                f"💰 Saldo: ${user[3]:.2f}"
+            )
+
+        text = (
+            f"👥 **GESTIÓN DE USUARIOS**\n\n"
+            f"📊 Total: **{total}**\n\n"
+            + "\n\n".join(lines)
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("owner_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("owner_"))
+async def owner_reserved(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer(
+            "❌ Función exclusiva del Owner.",
+            show_alert=True
+        )
+        return
+
+    reserved = {
+        "owner_products": "📦 Productos",
+        "owner_payments": "💳 Pagos",
+        "owner_admins": "⚙️ Administradores",
+        "owner_settings": "🔧 Configuración",
+        "owner_coupons": "🎟️ Cupones",
+        "owner_broadcast": "📢 Difusión",
+        "owner_logs": "📜 Registros"
+    }
+
+    if callback.data in reserved:
+        await callback.answer(
+            f"⚙️ {reserved[callback.data]} se configurará en la siguiente sección.",
+            show_alert=True
+    )
+        @router.callback_query(F.data == "owner_products")
+async def cb_owner_products(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, category, name, price, stock, status "
+        "FROM products ORDER BY id DESC LIMIT 50"
+    )
+    products = cur.fetchall()
+    conn.close()
+
+    kb = [
+        [InlineKeyboardButton(
+            text="➕ Agregar producto",
+            callback_data="owner_product_add"
+        )]
+    ]
+
+    if products:
+        for product in products:
+            status = "🟢" if str(product[5]).lower() in (
+                "disponible", "activo", "available"
+            ) else "🔴"
+
+            kb.append([
+                InlineKeyboardButton(
+                    text=f"{status} {product[2][:25]}",
+                    callback_data=f"owner_product_view:{product[0]}"
+                )
+            ])
+
+    kb.append([
+        InlineKeyboardButton(
+            text="🏠 Inicio",
+            callback_data="main_menu"
+        ),
+        InlineKeyboardButton(
+            text="⬅️ Atrás",
+            callback_data="owner_panel"
+        )
+    ])
+
+    if not products:
+        text = (
+            "📦 **GESTIÓN DE PRODUCTOS**\n\n"
+            "No hay productos registrados.\n\n"
+            "Pulsa **Agregar producto** para crear uno."
+        )
+    else:
+        text = (
+            "📦 **GESTIÓN DE PRODUCTOS**\n\n"
+            f"Productos registrados: **{len(products)}**\n\n"
+            "Selecciona un producto para administrarlo."
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("owner_product_view:"))
+async def cb_owner_product_view(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    try:
+        product_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await callback.answer("❌ Producto inválido.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, category, name, description, price, stock, status, image_url "
+        "FROM products WHERE id = ?",
+        (product_id,)
+    )
+    product = cur.fetchone()
+    conn.close()
+
+    if not product:
+        await callback.answer("❌ Producto no encontrado.", show_alert=True)
+        return
+
+    status = product[6] or "Sin estado"
+
+    text = (
+        "📦 **DETALLES DEL PRODUCTO**\n\n"
+        f"🆔 ID: `{product[0]}`\n"
+        f"📂 Categoría: **{product[1]}**\n"
+        f"🛍️ Nombre: **{product[2]}**\n"
+        f"📝 Descripción: {product[3] or 'Sin descripción'}\n"
+        f"💵 Precio: **${product[4]:.2f}**\n"
+        f"📦 Stock: **{product[5]}**\n"
+        f"📌 Estado: **{status}**"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="✏️ Editar",
+                callback_data=f"owner_product_edit:{product[0]}"
+            ),
+            InlineKeyboardButton(
+                text="🗑️ Eliminar",
+                callback_data=f"owner_product_delete:{product[0]}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="owner_products"
+            ),
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_payments")
+async def cb_owner_payments(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, user_id, amount, method, status, date, proof "
+        "FROM payments ORDER BY id DESC LIMIT 30"
+    )
+    payments = cur.fetchall()
+    conn.close()
+
+    if not payments:
+        text = "💳 **GESTIÓN DE PAGOS**\n\nNo hay pagos registrados."
+    else:
+        lines = []
+
+        for payment in payments:
+            status = payment[4]
+            icon = (
+                "🟡" if status == "Pendiente"
+                else "🟢" if status == "Aprobado"
+                else "🔴"
+            )
+
+            lines.append(
+                f"{icon} **Pago #{payment[0]}**\n"
+                f"👤 Usuario: `{payment[1]}`\n"
+                f"💵 Monto: **${payment[2]:.2f}**\n"
+                f"💳 Método: {payment[3]}\n"
+                f"📌 Estado: **{status}**\n"
+                f"📅 {payment[5]}"
+            )
+
+        text = "💳 **GESTIÓN DE PAGOS**\n\n" + "\n\n".join(lines)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("owner_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_admins")
+async def cb_owner_admins(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT user_id FROM admins ORDER BY user_id")
+    admins = [row[0] for row in cur.fetchall()]
+    conn.close()
+
+    if admins:
+        text = (
+            "⚙️ **ADMINISTRADORES**\n\n"
+            f"Total: **{len(admins)}**\n\n"
+            + "\n".join(f"👤 `{admin_id}`" for admin_id in admins)
+        )
+    else:
+        text = (
+            "⚙️ **ADMINISTRADORES**\n\n"
+            "No hay administradores registrados."
+        )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="➕ Agregar Admin",
+                callback_data="owner_admin_add"
+            ),
+            InlineKeyboardButton(
+                text="➖ Quitar Admin",
+                callback_data="owner_admin_remove"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="owner_panel"
+            ),
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_settings")
+async def cb_owner_settings(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute("SELECT key, value FROM settings ORDER BY key")
+    settings = cur.fetchall()
+    conn.close()
+
+    if settings:
+        text = (
+            "🔧 **CONFIGURACIÓN DEL SISTEMA**\n\n"
+            + "\n".join(
+                f"⚙️ `{key}` → `{value}`"
+                for key, value in settings
+            )
+        )
+    else:
+        text = (
+            "🔧 **CONFIGURACIÓN DEL SISTEMA**\n\n"
+            "No hay configuraciones personalizadas."
+        )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="➕ Nueva configuración",
+                callback_data="owner_setting_add"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="owner_panel"
+            ),
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_coupons")
+async def cb_owner_coupons(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT code, discount_type, value, uses_left, expires_at "
+        "FROM coupons ORDER BY code LIMIT 50"
+    )
+    coupons = cur.fetchall()
+    conn.close()
+
+    if not coupons:
+        text = "🎟️ **GESTIÓN DE CUPONES**\n\nNo hay cupones registrados."
+    else:
+        lines = []
+
+        for coupon in coupons:
+            discount = (
+                f"{coupon[2]:.0f}%"
+                if coupon[1].lower() == "percent"
+                else f"${coupon[2]:.2f}"
+            )
+
+            lines.append(
+                f"🎟️ `{coupon[0]}` • **{discount}**\n"
+                f"🔢 Usos: {coupon[3]}\n"
+                f"📅 Vence: {coupon[4] or 'Sin vencimiento'}"
+            )
+
+        text = "🎟️ **GESTIÓN DE CUPONES**\n\n" + "\n\n".join(lines)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="➕ Crear cupón",
+                callback_data="owner_coupon_add"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="⬅️ Atrás",
+                callback_data="owner_panel"
+            ),
+            InlineKeyboardButton(
+                text="🏠 Inicio",
+                callback_data="main_menu"
+            )
+        ]
+    ])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "owner_logs")
+async def cb_owner_logs(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ Acceso denegado.", show_alert=True)
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT id, user_id, product_name, price, date, status "
+        "FROM purchases ORDER BY id DESC LIMIT 20"
+    )
+    purchases = cur.fetchall()
+
+    conn.close()
+
+    if not purchases:
+        text = (
+            "📜 **REGISTROS DEL SISTEMA**\n\n"
+            "No existen registros de compras todavía."
+        )
+    else:
+        lines = []
+
+        for purchase in purchases:
+            lines.append(
+                f"🧾 **#{purchase[0]}**\n"
+                f"👤 Usuario: `{purchase[1]}`\n"
+                f"🛍️ Producto: {purchase[2]}\n"
+                f"💵 ${purchase[3]:.2f}\n"
+                f"📌 {purchase[5]}\n"
+                f"📅 {purchase[4]}"
+            )
+
+        text = (
+            "📜 **REGISTROS DEL SISTEMA**\n\n"
+            + "\n\n".join(lines)
+        )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=nav_buttons("owner_panel"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+    @router.callback_query(F.data == "owner_admins")
+async def cb_owner_admins(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute("SELECT user_id FROM admins ORDER BY user_id")
+admins = cur.fetchall()
+conn.close()
+
+if not admins:
+    text = (
+        "⚙️ **ADMINISTRADORES**\n\n"
+        "No hay administradores registrados."
+    )
+else:
+    lines = [f"👤 `{row[0]}`" for row in admins]
+    text = (
+        "⚙️ **ADMINISTRADORES**\n\n"
+        "Usuarios con permisos administrativos:\n\n"
+        + "\n".join(lines)
+    )
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_users")
+async def cb_owner_users(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT id, name, username, balance, is_premium, is_banned "
+    "FROM users ORDER BY registered_at DESC LIMIT 50"
+)
+users = cur.fetchall()
+cur.execute("SELECT COUNT(*) FROM users")
+total = cur.fetchone()[0]
+conn.close()
+
+if not users:
+    text = "👥 **USUARIOS**\n\nNo hay usuarios registrados."
+else:
+    lines = []
+    for u in users:
+        premium = "💎" if u[4] else "👤"
+        banned = " 🚫" if u[5] else ""
+        username = (
+            f"@{u[2]}"
+            if u[2] and u[2] != "Sin username"
+            else "Sin username"
+        )
+        lines.append(
+            f"{premium} `{u[0]}` • {username}{banned}\n"
+            f"👤 {u[1]}\n"
+            f"💰 Saldo: ${u[3]:.2f}"
+        )
+
+    text = (
+        f"👥 **GESTIÓN DE USUARIOS**\n\n"
+        f"📊 Total registrados: **{total}**\n\n"
+        + "\n\n".join(lines)
+    )
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_products")
+async def cb_owner_products(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT id, category, name, description, price, stock, status "
+    "FROM products ORDER BY id DESC LIMIT 50"
+)
+products = cur.fetchall()
+conn.close()
+
+if not products:
+    text = "📦 **GESTIÓN DE PRODUCTOS**\n\nNo hay productos registrados."
+else:
+    lines = []
+    for p in products:
+        status = (
+            "🟢"
+            if str(p[6]).lower() in ("disponible", "activo", "available")
+            else "🔴"
+        )
+        lines.append(
+            f"{status} `{p[0]}` **{p[2]}**\n"
+            f"📂 {p[1]}\n"
+            f"💵 ${p[4]:.2f} • 📦 Stock: {p[5]}\n"
+            f"📌 {p[6]}"
+        )
+
+    text = "📦 **GESTIÓN DE PRODUCTOS**\n\n" + "\n\n".join(lines)
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_payments")
+async def cb_owner_payments(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT id, user_id, amount, method, proof, status, date "
+    "FROM payments ORDER BY id DESC LIMIT 30"
+)
+payments = cur.fetchall()
+conn.close()
+
+if not payments:
+    text = "💳 **GESTIÓN DE PAGOS**\n\nNo hay pagos registrados."
+else:
+    lines = []
+    for p in payments:
+        icon = (
+            "🟡" if p[5] == "Pendiente"
+            else "🟢" if p[5] == "Aprobado"
+            else "🔴"
+        )
+        lines.append(
+            f"{icon} **Pago #{p[0]}**\n"
+            f"👤 Usuario: `{p[1]}`\n"
+            f"💵 Monto: ${p[2]:.2f}\n"
+            f"💳 Método: {p[3]}\n"
+            f"📌 Estado: {p[5]}\n"
+            f"📅 {p[6]}"
+        )
+
+    text = "💳 **GESTIÓN DE PAGOS**\n\n" + "\n\n".join(lines)
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_coupons")
+async def cb_owner_coupons(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT code, discount_type, value, uses_left, expires_at "
+    "FROM coupons ORDER BY code LIMIT 50"
+)
+coupons = cur.fetchall()
+conn.close()
+
+if not coupons:
+    text = "🎟️ **GESTIÓN DE CUPONES**\n\nNo hay cupones registrados."
+else:
+    lines = []
+    for c in coupons:
+        discount = (
+            f"{c[2]:.0f}%"
+            if c[1].lower() == "percent"
+            else f"${c[2]:.2f}"
+        )
+        expiry = c[4] or "Sin vencimiento"
+        lines.append(
+            f"🎟️ `{c[0]}`\n"
+            f"💎 Descuento: **{discount}**\n"
+            f"🔢 Usos restantes: **{c[3]}**\n"
+            f"📅 Vence: {expiry}"
+        )
+
+    text = "🎟️ **GESTIÓN DE CUPONES**\n\n" + "\n\n".join(lines)
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_settings")
+async def cb_owner_settings(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute("SELECT key, value FROM settings ORDER BY key")
+settings = cur.fetchall()
+conn.close()
+
+if not settings:
+    text = (
+        "🔧 **CONFIGURACIÓN**\n\n"
+        "No hay configuraciones personalizadas registradas."
+    )
+else:
+    lines = [
+        f"⚙️ **{key}**\n└ {value}"
+        for key, value in settings
+    ]
+    text = "🔧 **CONFIGURACIÓN DEL SISTEMA**\n\n" + "\n\n".join(lines)
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_logs")
+async def cb_owner_logs(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+
+cur.execute(
+    "SELECT id, user_id, product_name, price, date, status "
+    "FROM purchases ORDER BY id DESC LIMIT 20"
+)
+purchases = cur.fetchall()
+
+cur.execute(
+    "SELECT id, user_id, amount, method, status, date "
+    "FROM payments ORDER BY id DESC LIMIT 20"
+)
+payments = cur.fetchall()
+
+conn.close()
+
+lines = []
+
+for p in purchases:
+    lines.append(
+        f"🛒 Venta #{p[0]} • Usuario `{p[1]}`\n"
+        f"📦 {p[2]} • 💵 ${p[3]:.2f}\n"
+        f"📅 {p[4]} • 📌 {p[5]}"
+    )
+
+for p in payments:
+    lines.append(
+        f"💳 Pago #{p[0]} • Usuario `{p[1]}`\n"
+        f"💵 ${p[2]:.2f} • {p[3]}\n"
+        f"📅 {p[5]} • 📌 {p[4]}"
+    )
+
+text = (
+    "📜 **REGISTROS DEL SISTEMA**\n\n"
+    + ("\n\n".join(lines) if lines else "No hay registros disponibles.")
+)
+
+await callback.message.edit_text(
+    text,
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+@router.callback_query(F.data == "owner_broadcast")
+async def cb_owner_broadcast(callback: CallbackQuery, state: FSMContext):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+await state.set_state(AdminStates.waiting_for_broadcast)
+await callback.message.edit_text(
+    "📢 **DIFUSIÓN DEL OWNER**\n\n"
+    "Envía el mensaje que deseas enviar a los usuarios "
+    "no baneados de la tienda.\n\n"
+    "⚠️ El mensaje será enviado tal como lo recibamos.",
+    reply_markup=nav_buttons("owner_panel"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_admins")
+async def cb_manage_admins(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute("SELECT user_id FROM admins ORDER BY user_id")
+admins = [row[0] for row in cur.fetchall()]
+conn.close()
+
+if admins:
+    admin_list = "\n".join(f"👤 `{uid}`" for uid in admins)
+else:
+    admin_list = "No hay administradores registrados."
+
+kb = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(
+            text="➕ Agregar Admin",
+            callback_data="owner_add_admin"
+        ),
+        InlineKeyboardButton(
+            text="➖ Quitar Admin",
+            callback_data="owner_remove_admin"
+        )
+    ],
+    [
+        InlineKeyboardButton(
+            text="🏠 Inicio",
+            callback_data="main_menu"
+        ),
+        InlineKeyboardButton(
+            text="⬅️ Atrás",
+            callback_data="owner_panel"
+        )
+    ]
+])
+
+await callback.message.edit_text(
+    "⚙️ **ADMINISTRADORES**\n\n"
+    "👥 Administradores actuales:\n\n"
+    f"{admin_list}",
+    reply_markup=kb,
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_add_admin")
+async def cb_add_admin(callback: CallbackQuery, state: FSMContext):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+await state.set_state(AdminStates.waiting_for_admin_id)
+await state.update_data(admin_action="add")
+
+await callback.message.edit_text(
+    "➕ **AGREGAR ADMINISTRADOR**\n\n"
+    "Envía ahora el ID numérico del usuario que deseas "
+    "convertir en administrador.\n\n"
+    "Ejemplo:\n"
+    "`123456789`",
+    reply_markup=nav_buttons("owner_admins"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.callback_query(F.data == "owner_remove_admin")
+async def cb_remove_admin(callback: CallbackQuery, state: FSMContext):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Acceso denegado.", show_alert=True)
+return
+
+await state.set_state(AdminStates.waiting_for_admin_id)
+await state.update_data(admin_action="remove")
+
+await callback.message.edit_text(
+    "➖ **QUITAR ADMINISTRADOR**\n\n"
+    "Envía el ID numérico del administrador que deseas quitar.\n\n"
+    "Ejemplo:\n"
+    "`123456789`",
+    reply_markup=nav_buttons("owner_admins"),
+    parse_mode="Markdown"
+)
+await callback.answer()
+
+@router.message(AdminStates.waiting_for_admin_id)
+async def process_admin_change(message: Message, state: FSMContext):
+if not is_owner(message.from_user.id):
+await state.clear()
+return
+
+raw_id = (message.text or "").strip()
+
+if not raw_id.isdigit():
+    await message.answer(
+        "❌ El ID debe contener únicamente números.",
+        reply_markup=nav_buttons("owner_admins"),
+        parse_mode="Markdown"
+    )
+    return
+
+target_id = int(raw_id)
+data = await state.get_data()
+action = data.get("admin_action")
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+
+if action == "add":
+    cur.execute(
+        "INSERT OR IGNORE INTO admins (user_id) VALUES (?)",
+        (target_id,)
+    )
+    changed = cur.rowcount > 0
+    result = (
+        "✅ Usuario agregado como administrador."
+        if changed
+        else "ℹ️ Ese usuario ya es administrador."
+    )
+else:
+    cur.execute(
+        "DELETE FROM admins WHERE user_id = ?",
+        (target_id,)
+    )
+    changed = cur.rowcount > 0
+    result = (
+        "✅ Administrador eliminado correctamente."
+        if changed
+        else "ℹ️ Ese usuario no estaba registrado como administrador."
+    )
+
+conn.commit()
+conn.close()
+await state.clear()
+
+await message.answer(
+    f"⚙️ **GESTIÓN DE ADMINISTRADORES**\n\n"
+    f"👤 ID: `{target_id}`\n"
+    f"{result}",
+    reply_markup=nav_buttons("owner_admins"),
+    parse_mode="Markdown"
+)
+
+@router.callback_query(F.data.startswith("payment_approve_"))
+async def cb_approve_payment(callback: CallbackQuery):
+if not is_admin_or_owner(callback.from_user.id):
+await callback.answer("❌ Sin permisos.", show_alert=True)
+return
+
+try:
+    payment_id = int(callback.data.split("_")[-1])
+except (ValueError, IndexError):
+    await callback.answer("❌ Solicitud inválida.", show_alert=True)
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+
+cur.execute(
+    "SELECT user_id, amount, status FROM payments WHERE id = ?",
+    (payment_id,)
+)
+payment = cur.fetchone()
+
+if not payment:
+    conn.close()
+    await callback.answer("❌ Pago no encontrado.", show_alert=True)
+    return
+
+user_id, amount, status = payment
+
+if status != "Pendiente":
+    conn.close()
+    await callback.answer(
+        f"⚠️ Este pago ya está marcado como {status}.",
+        show_alert=True
+    )
+    return
+
+cur.execute(
+    "UPDATE payments SET status = 'Aprobado' WHERE id = ?",
+    (payment_id,)
+)
+
+cur.execute(
+    "UPDATE users SET balance = balance + ? WHERE id = ?",
+    (amount, user_id)
+)
+
+conn.commit()
+conn.close()
+
+try:
+    await callback.bot.send_message(
+        user_id,
+        "✅ **RECARGA APROBADA**\n\n"
+        f"💰 Monto acreditado: **${amount:.2f}**\n"
+        f"🧾 Solicitud: `#{payment_id}`\n\n"
+        "Tu saldo ha sido actualizado correctamente.",
+        parse_mode="Markdown"
+    )
+except TelegramAPIError:
+    pass
+
+await callback.message.edit_text(
+    "✅ **PAGO APROBADO**\n\n"
+    f"🧾 Solicitud: `#{payment_id}`\n"
+    f"👤 Usuario: `{user_id}`\n"
+    f"💰 Monto: **${amount:.2f}**\n"
+    "📌 Estado: **Aprobado**",
+    reply_markup=nav_buttons("admin_payments"),
+    parse_mode="Markdown"
+)
+await callback.answer("Pago aprobado correctamente.")
+
+@router.callback_query(F.data.startswith("payment_reject_"))
+async def cb_reject_payment(callback: CallbackQuery):
+if not is_admin_or_owner(callback.from_user.id):
+await callback.answer("❌ Sin permisos.", show_alert=True)
+return
+
+try:
+    payment_id = int(callback.data.split("_")[-1])
+except (ValueError, IndexError):
+    await callback.answer("❌ Solicitud inválida.", show_alert=True)
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+
+cur.execute(
+    "SELECT user_id, amount, status FROM payments WHERE id = ?",
+    (payment_id,)
+)
+payment = cur.fetchone()
+
+if not payment:
+    conn.close()
+    await callback.answer("❌ Pago no encontrado.", show_alert=True)
+    return
+
+user_id, amount, status = payment
+
+if status != "Pendiente":
+    conn.close()
+    await callback.answer(
+        f"⚠️ Este pago ya está marcado como {status}.",
+        show_alert=True
+    )
+    return
+
+cur.execute(
+    "UPDATE payments SET status = 'Rechazado' WHERE id = ?",
+    (payment_id,)
+)
+conn.commit()
+conn.close()
+
+try:
+    await callback.bot.send_message(
+        user_id,
+        "❌ **RECARGA RECHAZADA**\n\n"
+        f"🧾 Solicitud: `#{payment_id}`\n"
+        f"💰 Monto: **${amount:.2f}**\n\n"
+        "Tu comprobante no fue aprobado. "
+        "Si consideras que hubo un error, contacta con soporte.",
+        parse_mode="Markdown"
+    )
+except TelegramAPIError:
+    pass
+
+await callback.message.edit_text(
+    "❌ **PAGO RECHAZADO**\n\n"
+    f"🧾 Solicitud: `#{payment_id}`\n"
+    f"👤 Usuario: `{user_id}`\n"
+    f"💰 Monto: **${amount:.2f}**\n"
+    "📌 Estado: **Rechazado**",
+    reply_markup=nav_buttons("admin_payments"),
+    parse_mode="Markdown"
+)
+await callback.answer("Pago rechazado correctamente.")
+@router.callback_query(F.data.startswith("user_ban_"))
+async def cb_user_ban(callback: CallbackQuery):
+if not is_admin_or_owner(callback.from_user.id):
+await callback.answer("❌ Sin permisos.", show_alert=True)
+return
+
+try:
+    user_id = int(callback.data.split("_")[-1])
+except (ValueError, IndexError):
+    await callback.answer("❌ Usuario inválido.", show_alert=True)
+    return
+
+if is_owner(user_id):
+    await callback.answer(
+        "❌ No puedes modificar al Owner.",
+        show_alert=True
+    )
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "UPDATE users SET is_banned = 1 WHERE id = ?",
+    (user_id,)
+)
+changed = cur.rowcount > 0
+conn.commit()
+conn.close()
+
+if not changed:
+    await callback.answer("❌ Usuario no encontrado.", show_alert=True)
+    return
+
+try:
+    await callback.bot.send_message(
+        user_id,
+        "🚫 **CUENTA RESTRINGIDA**\n\n"
+        "Tu acceso a la tienda ha sido restringido por un administrador.",
+        parse_mode="Markdown"
+    )
+except TelegramAPIError:
+    pass
+
+await callback.answer("✅ Usuario baneado correctamente.")
+await callback.message.edit_text(
+    "🚫 **USUARIO BLOQUEADO**\n\n"
+    f"🆔 ID: `{user_id}`\n"
+    "📌 Estado: **Baneado**",
+    reply_markup=nav_buttons("admin_users"),
+    parse_mode="Markdown"
+)
+
+@router.callback_query(F.data.startswith("user_unban_"))
+async def cb_user_unban(callback: CallbackQuery):
+if not is_admin_or_owner(callback.from_user.id):
+await callback.answer("❌ Sin permisos.", show_alert=True)
+return
+
+try:
+    user_id = int(callback.data.split("_")[-1])
+except (ValueError, IndexError):
+    await callback.answer("❌ Usuario inválido.", show_alert=True)
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "UPDATE users SET is_banned = 0 WHERE id = ?",
+    (user_id,)
+)
+changed = cur.rowcount > 0
+conn.commit()
+conn.close()
+
+if not changed:
+    await callback.answer("❌ Usuario no encontrado.", show_alert=True)
+    return
+
+try:
+    await callback.bot.send_message(
+        user_id,
+        "✅ **CUENTA RESTAURADA**\n\n"
+        "Tu acceso a la tienda ha sido restaurado.",
+        parse_mode="Markdown"
+    )
+except TelegramAPIError:
+    pass
+
+await callback.answer("Usuario desbloqueado.")
+await callback.message.edit_text(
+    "✅ **USUARIO DESBLOQUEADO**\n\n"
+    f"🆔 ID: `{user_id}`\n"
+    "📌 Estado: **Activo**",
+    reply_markup=nav_buttons("admin_users"),
+    parse_mode="Markdown"
+)
+
+@router.callback_query(F.data.startswith("user_premium_"))
+async def cb_user_premium(callback: CallbackQuery):
+if not is_admin_or_owner(callback.from_user.id):
+await callback.answer("❌ Sin permisos.", show_alert=True)
+return
+
+try:
+    user_id = int(callback.data.split("_")[-1])
+except (ValueError, IndexError):
+    await callback.answer("❌ Usuario inválido.", show_alert=True)
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT is_premium FROM users WHERE id = ?",
+    (user_id,)
+)
+user = cur.fetchone()
+
+if not user:
+    conn.close()
+    await callback.answer("❌ Usuario no encontrado.", show_alert=True)
+    return
+
+new_status = 0 if user[0] else 1
+
+cur.execute(
+    "UPDATE users SET is_premium = ? WHERE id = ?",
+    (new_status, user_id)
+)
+conn.commit()
+conn.close()
+
+status_text = "ACTIVADO 💎" if new_status else "DESACTIVADO ❌"
+
+try:
+    await callback.bot.send_message(
+        user_id,
+        f"💎 **PREMIUM {status_text}**\n\n"
+        + (
+            "Tu membresía Premium ha sido activada."
+            if new_status
+            else "Tu membresía Premium ha sido desactivada."
+        ),
+        parse_mode="Markdown"
+    )
+except TelegramAPIError:
+    pass
+
+await callback.message.edit_text(
+    "💎 **ESTADO PREMIUM ACTUALIZADO**\n\n"
+    f"🆔 Usuario: `{user_id}`\n"
+    f"📌 Estado: **{'Activo' if new_status else 'Inactivo'}**",
+    reply_markup=nav_buttons("admin_users"),
+    parse_mode="Markdown"
+)
+await callback.answer("Estado Premium actualizado.")
+
+@router.callback_query(F.data.startswith("product_delete_"))
+async def cb_product_delete(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Solo el Owner puede eliminar productos.", show_alert=True)
+return
+
+try:
+    product_id = int(callback.data.split("_")[-1])
+except (ValueError, IndexError):
+    await callback.answer("❌ Producto inválido.", show_alert=True)
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT name FROM products WHERE id = ?",
+    (product_id,)
+)
+product = cur.fetchone()
+
+if not product:
+    conn.close()
+    await callback.answer("❌ Producto no encontrado.", show_alert=True)
+    return
+
+cur.execute(
+    "DELETE FROM products WHERE id = ?",
+    (product_id,)
+)
+conn.commit()
+conn.close()
+
+await callback.message.edit_text(
+    "🗑️ **PRODUCTO ELIMINADO**\n\n"
+    f"📦 Producto: **{product[0]}**\n"
+    f"🆔 ID: `{product_id}`\n\n"
+    "El producto fue eliminado correctamente.",
+    reply_markup=nav_buttons("owner_products"),
+    parse_mode="Markdown"
+)
+await callback.answer("Producto eliminado.")
+
+@router.callback_query(F.data.startswith("coupon_delete_"))
+async def cb_coupon_delete(callback: CallbackQuery):
+if not is_owner(callback.from_user.id):
+await callback.answer("❌ Solo el Owner puede eliminar cupones.", show_alert=True)
+return
+
+code = callback.data[len("coupon_delete_"):].strip().upper()
+
+if not code:
+    await callback.answer("❌ Cupón inválido.", show_alert=True)
+    return
+
+conn = sqlite3.connect(DB_NAME)
+cur = conn.cursor()
+cur.execute(
+    "SELECT code FROM coupons WHERE code = ?",
+    (code,)
+)
+coupon = cur.fetchone()
+
+if not coupon:
+    conn.close()
+    await callback.answer("❌ Cupón no encontrado.", show_alert=True)
+    return
+
+cur.execute(
+    "DELETE FROM coupons WHERE code = ?",
+    (code,)
+)
+conn.commit()
+conn.close()
+
+await callback.message.edit_text(
+    "🗑️ **CUPÓN ELIMINADO**\n\n"
+    f"🎟️ Código: `{code}`\n\n"
+    "El cupón fue eliminado correctamente.",
+    reply_markup=nav_buttons("owner_coupons"),
+    parse_mode="Markdown"
+)
+await callback.answer("Cupón eliminado.")
