@@ -1535,8 +1535,9 @@ async def cb_channel(callback: CallbackQuery):
         reply_markup=nav_buttons(),
         parse_mode="Markdown"
     )
-    await callback.answer()
-    @router.callback_query(F.data == "admin_panel")
+        await callback.answer()
+
+@router.callback_query(F.data == "admin_panel")
 async def cb_admin_panel(callback: CallbackQuery):
     if not is_admin_or_owner(callback.from_user.id):
         await callback.answer("❌ No tienes permisos.", show_alert=True)
