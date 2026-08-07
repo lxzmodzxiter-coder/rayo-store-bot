@@ -322,7 +322,8 @@ async def cmd_owner(message: Message):
 @router.callback_query(F.data == "close_menu")
 async def cb_close_legacy(callback: CallbackQuery):
     await callback.answer("Esta opción ya no está disponible.")
-    @router.callback_query(F.data == "menu_catalog")
+
+@router.callback_query(F.data == "menu_catalog")
 async def cb_catalog(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
