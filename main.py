@@ -692,7 +692,7 @@ f"📅 *Fecha:* {date_now}\n\n"
 reply_markup=nav_buttons(),
 parse_mode="Markdown"
 )
-    @router.callback_query(F.data == "menu_profile")
+@router.callback_query(F.data == "menu_profile")
 async def cb_profile(callback: CallbackQuery):
     u = db_get_user(callback.from_user.id)
 
