@@ -72,22 +72,21 @@ async def cmd_start(message: Message):
     user = message.from_user
     db_user = get_user(user.id)
     
+    # Menú optimizado y limpio para evitar saturación de botones
     keyboard_buttons = [
         [
             InlineKeyboardButton(text="🛍️ Catálogo", callback_data="menu_catalogo"),
             InlineKeyboardButton(text="👤 Mi Perfil", callback_data="menu_perfil")
         ],
         [
-            InlineKeyboardButton(text="💳 Recargar Saldo", callback_data="menu_recargar"),
-            InlineKeyboardButton(text="🎟️ Cupones", callback_data="menu_cupones")
+            InlineKeyboardButton(text="💳 Recargar", callback_data="menu_recargar"),
+            InlineKeyboardButton(text="🎟️ Cupones", callback_data="menu_cupones"),
+            InlineKeyboardButton(text="💎 Premium", callback_data="menu_premium")
         ],
         [
-            InlineKeyboardButton(text="💎 Premium", callback_data="menu_premium"),
-            InlineKeyboardButton(text="📦 Mis Compras", callback_data="menu_compras")
-        ],
-        [
+            InlineKeyboardButton(text="📦 Mis Compras", callback_data="menu_compras"),
             InlineKeyboardButton(text="📞 Soporte", url="https://t.me/SoporteLxzStore"),
-            InlineKeyboardButton(text="📢 Canal Oficial", url="https://t.me/CanalLxzStore")
+            InlineKeyboardButton(text="📢 Canal", url="https://t.me/CanalLxzStore")
         ]
     ]
     
@@ -99,11 +98,11 @@ async def cmd_start(message: Message):
     keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
     
     text = (
-        "⚡ **LXZ STORE BEST**\n\n"
+        "⚡ **LXZ STORE BEST** ⚡\n\n"
         f"👤 **Cliente:** {user.full_name}\n"
+        f"🆔 **ID:** `{user.id}`\n"
         f"💰 **Saldo:** ${db_user['balance']:.2f}\n"
-        f"💎 **Premium:** {db_user['membership']}\n"
-        f"📦 **Estado:** 🟢 Operativo\n\n"
+        f"💎 **Membresía:** {db_user['membership']}\n\n"
         "Selecciona una opción en el menú inferior:"
     )
     
@@ -270,6 +269,7 @@ async def show_profile(callback: CallbackQuery):
     text = (
         f"👤 **MI PERFIL - LXZ STORE BEST**\n\n"
         f"🏷️ Nombre: {db_user['full_name']}\n"
+        f"🆔 ID: `{callback.from_user.id}`\n"
         f"💰 Saldo: ${db_user['balance']:.2f}\n"
         f"💎 Premium: {db_user['membership']}\n"
     )
@@ -410,30 +410,29 @@ async def adm_products_menu(callback: CallbackQuery):
 @router.message(Command("addcredit"))
 async def cmd_addcredit(message: Message):
     if not is_admin(message.from_user.id):
-        await message.answer("❌ No tienes permisos de administrador para usar este comando.")
+        await message.answer("❌ No tienes permisos de administrador.")
         return
         
     args = message.text.split()
     if len(args) < 3:
-        return await message.answer("⚠️ **Uso correcto:** `/addcredit ID CANTIDAD`\n*Ejemplo:* `/addcredit 123456789 10`", parse_mode="Markdown")
+        return await message.answer("⚠️ **Uso correcto:** `/addcredit ID CANTIDAD`\n*Ejemplo:* `/addcredit 8877117120 500`", parse_mode="Markdown")
     
     try:
         target_id = int(args[1])
-        # Reemplaza automáticamente las comas por puntos por si escriben decimales con coma
         amount = float(args[2].replace(",", "."))
     except ValueError:
-        return await message.answer("❌ El ID y la cantidad deben ser números válidos. (Ej: `/addcredit 12345 5.0`)", parse_mode="Markdown")
+        return await message.answer("❌ El ID y la cantidad deben ser números válidos.", parse_mode="Markdown")
     
-    # Verificar si el usuario existe en la base de datos
+    # Validar si el usuario está registrado en la base de datos
     db_target = get_user(target_id)
     if not db_target:
-        return await message.answer(f"❌ El usuario con ID `{target_id}` no está registrado. Debe abrir el bot y enviar `/start` primero.", parse_mode="Markdown")
+        return await message.answer(f"❌ El usuario con ID `{target_id}` no está registrado. Debe abrir el bot y presionar `/start` primero.", parse_mode="Markdown")
         
     success, res = update_balance(target_id, amount, "ADMIN_ADD", message.from_user.id)
     if success:
         await message.answer(f"✅ Se han acreditado **${amount:.2f}** correctamente.\n👤 Usuario: `{target_id}`\n💰 Nuevo saldo: **${res:.2f}**", parse_mode="Markdown")
     else:
-        await message.answer(f"❌ Error al actualizar el saldo: {res}")
+        await message.answer(f"❌ Error al actualizar saldo: {res}")
 
 @router.message(Command("ban"))
 async def cmd_ban(message: Message):
