@@ -409,13 +409,17 @@ async def adm_products_menu(callback: CallbackQuery):
 
 @router.message(Command("addcredit"))
 async def cmd_addcredit(message: Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("❌ No tienes permisos de administrador.")
-        return
+    user_id = message.from_user.id
+    
+    # Depuración directa: si eres el owner o tu ID es 7939709543, pasa obligatoriamente
+    if user_id != OWNER_ID and user_id != 7939709543:
+        if not is_admin(user_id):
+            await message.answer(f"❌ Acceso denegado. Tu ID es `{user_id}` y no estás registrado como admin/owner.", parse_mode="Markdown")
+            return
         
     args = message.text.split()
     if len(args) < 3:
-        return await message.answer("⚠️ **Uso correcto:** `/addcredit ID CANTIDAD`\n*Ejemplo:* `/addcredit 8877117120 500`", parse_mode="Markdown")
+        return await message.answer("⚠️ **Uso correcto:** `/addcredit ID CANTIDAD`\n*Ejemplo:* `/addcredit 7939709543 500`", parse_mode="Markdown")
     
     try:
         target_id = int(args[1])
@@ -428,7 +432,7 @@ async def cmd_addcredit(message: Message):
     if not db_target:
         return await message.answer(f"❌ El usuario con ID `{target_id}` no está registrado. Debe abrir el bot y presionar `/start` primero.", parse_mode="Markdown")
         
-    success, res = update_balance(target_id, amount, "ADMIN_ADD", message.from_user.id)
+    success, res = update_balance(target_id, amount, "ADMIN_ADD", user_id)
     if success:
         await message.answer(f"✅ Se han acreditado **${amount:.2f}** correctamente.\n👤 Usuario: `{target_id}`\n💰 Nuevo saldo: **${res:.2f}**", parse_mode="Markdown")
     else:
