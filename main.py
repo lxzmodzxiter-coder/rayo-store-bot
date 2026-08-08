@@ -410,12 +410,30 @@ async def adm_products_menu(callback: CallbackQuery):
 @router.message(Command("addcredit"))
 async def cmd_addcredit(message: Message):
     if not is_admin(message.from_user.id):
+        await message.answer("❌ No tienes permisos de administrador para usar este comando.")
         return
+        
     args = message.text.split()
     if len(args) < 3:
-        return await message.answer("Uso: `/addcredit ID CANTIDAD`", parse_mode="Markdown")
-    success, res = update_balance(int(args[1]), float(args[2]), "ADMIN_ADD", message.from_user.id)
-    await message.answer(f"✅ Saldo actualizado." if success else f"❌ Error: {res}")
+        return await message.answer("⚠️ **Uso correcto:** `/addcredit ID CANTIDAD`\n*Ejemplo:* `/addcredit 123456789 10`", parse_mode="Markdown")
+    
+    try:
+        target_id = int(args[1])
+        # Reemplaza automáticamente las comas por puntos por si escriben decimales con coma
+        amount = float(args[2].replace(",", "."))
+    except ValueError:
+        return await message.answer("❌ El ID y la cantidad deben ser números válidos. (Ej: `/addcredit 12345 5.0`)", parse_mode="Markdown")
+    
+    # Verificar si el usuario existe en la base de datos
+    db_target = get_user(target_id)
+    if not db_target:
+        return await message.answer(f"❌ El usuario con ID `{target_id}` no está registrado. Debe abrir el bot y enviar `/start` primero.", parse_mode="Markdown")
+        
+    success, res = update_balance(target_id, amount, "ADMIN_ADD", message.from_user.id)
+    if success:
+        await message.answer(f"✅ Se han acreditado **${amount:.2f}** correctamente.\n👤 Usuario: `{target_id}`\n💰 Nuevo saldo: **${res:.2f}**", parse_mode="Markdown")
+    else:
+        await message.answer(f"❌ Error al actualizar el saldo: {res}")
 
 @router.message(Command("ban"))
 async def cmd_ban(message: Message):
