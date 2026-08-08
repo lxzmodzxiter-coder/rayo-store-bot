@@ -1,493 +1,849 @@
+import os
 import asyncio
 import logging
-import os
-import sys
-from datetime import datetime
+import datetime
 from aiogram import Bot, Dispatcher, Router, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from dotenv import load_dotenv
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 
-from database import init_db, get_db, get_user, register_user, update_balance, log_action, get_setting, set_setting
+from database import (
+    get_connection, db_get_user, db_upsert_user, db_log_action, db_get_setting, db_set_setting
+)
 
-load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = int(os.getenv("OWNER_ID", 0))
+OWNER_ID_ENV = os.getenv("OWNER_ID")
+OWNER_ID = int(OWNER_ID_ENV) if OWNER_ID_ENV and OWNER_ID_ENV.isdigit() else 7939709543
 
 if not BOT_TOKEN:
-    print("Error crítico: BOT_TOKEN no configurado en variables de entorno.")
-    sys.exit(1)
+    logging.critical("BOT_TOKEN no encontrado en las variables de entorno.")
+    exit(1)
 
-logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
 router = Router()
+dp.include_router(router)
 
-class AdminStates(StatesGroup):
+class StoreStates(StatesGroup):
+    waiting_for_recharge_amount = State()
+    waiting_for_recharge_voucher = State()
+    waiting_for_coupon = State()
     waiting_for_broadcast = State()
-    waiting_for_add_credit = State()
-    waiting_for_remove_credit = State()
-    waiting_for_user_search = State()
-    waiting_for_recharge_proof = State()
+    waiting_for_add_credit_id = State()
+    waiting_for_add_credit_amount = State()
+    waiting_for_remove_credit_id = State()
+    waiting_for_remove_credit_amount = State()
+    waiting_for_ban_id = State()
+    waiting_for_unban_id = State()
+    waiting_for_search_user = State()
+    waiting_for_support_msg = State()
 
 def is_owner(user_id: int) -> bool:
     return user_id == OWNER_ID
 
 def is_admin(user_id: int) -> bool:
-    if is_owner(user_id):
+    if user_id == OWNER_ID:
         return True
-    with get_db() as conn:
-        res = conn.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)).fetchone()
-        return res is not None
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM admins WHERE user_id = ?", (user_id,))
+    res = cursor.fetchone()
+    conn.close()
+    return res is not None
 
-@router.message()
-@router.callback_query()
-async def global_security_filter(event: Message | CallbackQuery, *args, **kwargs):
-    user = event.from_user
-    if not user:
-        return
-    
-    register_user(user.id, user.username or "", user.full_name)
-    
-    db_user = get_user(user.id)
-    if db_user and db_user["banned"] == 1:
-        msg = "❌ Tu cuenta se encuentra baneada de este bot."
-        if isinstance(event, Message):
-            await event.answer(msg)
-        else:
-            await event.answer(msg, show_alert=True)
-        return
+def back_home_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main"),
+         InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_main")]
+    ])
 
-    maintenance = get_setting("maintenance")
-    if maintenance == "ON" and not is_admin(user.id):
-        m_text = "🔧 **TIENDA EN MANTENIMIENTO**\n\nEstamos actualizando nuestros sistemas. Regresamos pronto."
-        if isinstance(event, Message):
-            await event.answer(m_text, parse_mode="Markdown")
-        else:
-            await event.answer("🔧 Tienda en mantenimiento temporal.", show_alert=True)
-        return
+def custom_back_kb(back_callback: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main"),
+         InlineKeyboardButton(text="⬅️ Atrás", callback_data=back_callback)]
+    ])
+
+def main_menu_kb(user_id: int):
+    kb = [
+        [InlineKeyboardButton(text="🛍️ Catálogo", callback_data="menu_catalog"),
+         InlineKeyboardButton(text="👤 Mi Perfil", callback_data="menu_profile")],
+        [InlineKeyboardButton(text="📦 Mis Compras", callback_data="menu_purchases"),
+         InlineKeyboardButton(text="💳 Recargar Saldo", callback_data="menu_recharge")],
+        [InlineKeyboardButton(text="🎟️ Cupones", callback_data="menu_coupons"),
+         InlineKeyboardButton(text="💎 Premium", callback_data="menu_premium")],
+        [InlineKeyboardButton(text="📞 Soporte", callback_data="menu_support"),
+         InlineKeyboardButton(text="📢 Canal Oficial", callback_data="menu_channel")]
+    ]
+    if is_admin(user_id):
+        kb.append([InlineKeyboardButton(text="⚙️ Panel Admin", callback_data="admin_panel")])
+    if is_owner(user_id):
+        kb.append([InlineKeyboardButton(text="👑 Panel Owner", callback_data="owner_panel")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
 @router.message(Command("start"))
-async def cmd_start(message: Message):
-    user = message.from_user
-    db_user = get_user(user.id)
-    
-    # Menú optimizado y limpio para evitar saturación de botones
-    keyboard_buttons = [
-        [
-            InlineKeyboardButton(text="🛍️ Catálogo", callback_data="menu_catalogo"),
-            InlineKeyboardButton(text="👤 Mi Perfil", callback_data="menu_perfil")
-        ],
-        [
-            InlineKeyboardButton(text="💳 Recargar", callback_data="menu_recargar"),
-            InlineKeyboardButton(text="🎟️ Cupones", callback_data="menu_cupones"),
-            InlineKeyboardButton(text="💎 Premium", callback_data="menu_premium")
-        ],
-        [
-            InlineKeyboardButton(text="📦 Mis Compras", callback_data="menu_compras"),
-            InlineKeyboardButton(text="📞 Soporte", url="https://t.me/SoporteLxzStore"),
-            InlineKeyboardButton(text="📢 Canal", url="https://t.me/CanalLxzStore")
-        ]
-    ]
-    
-    if is_admin(user.id):
-        keyboard_buttons.append([InlineKeyboardButton(text="🛡️ Panel Admin", callback_data="panel_admin")])
-    if is_owner(user.id):
-        keyboard_buttons.append([InlineKeyboardButton(text="👑 Panel Owner", callback_data="panel_owner")])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-    
-    text = (
-        "⚡ **LXZ STORE BEST** ⚡\n\n"
-        f"👤 **Cliente:** {user.full_name}\n"
-        f"🆔 **ID:** `{user.id}`\n"
-        f"💰 **Saldo:** ${db_user['balance']:.2f}\n"
-        f"💎 **Membresía:** {db_user['membership']}\n\n"
-        "Selecciona una opción en el menú inferior:"
-    )
-    
-    if message.text and message.text.startswith("/start"):
-        await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
-    else:
-        await message.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data == "nav_inicio")
-async def nav_inicio(callback: CallbackQuery):
-    await callback.answer()
-    await cmd_start(callback.message)
-
-@router.callback_query(F.data == "menu_catalogo")
-async def show_catalog(callback: CallbackQuery):
-    await callback.answer()
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 ANDROID", callback_data="cat_ANDROID")],
-        [InlineKeyboardButton(text="🍎 iOS / IPHONE", callback_data="cat_IOS")],
-        [InlineKeyboardButton(text="💻 WINDOWS / PC", callback_data="cat_PC")],
-        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="nav_inicio")]
-    ])
-    await callback.message.edit_text(
-        "🛍️ **CATÁLOGO DE PRODUCTOS - LXZ STORE BEST**\n\nSelecciona una categoría:",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-@router.callback_query(F.data.startswith("cat_"))
-async def show_category_products(callback: CallbackQuery):
-    await callback.answer()
-    cat = callback.data.split("_")[1]
-    
-    if cat == "PC":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_catalogo")]])
-        await callback.message.edit_text("💻 **WINDOWS / PC**\n\n🚧 Próximamente disponible.", reply_markup=keyboard, parse_mode="Markdown")
-        return
-        
-    with get_db() as conn:
-        products = conn.execute("SELECT * FROM products WHERE category = ? AND status != '🔴 Desactivado'", (cat,)).fetchall()
-        
-    if not products:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_catalogo")]])
-        await callback.message.edit_text(f"📱 **{cat}**\n\nNo hay productos disponibles.", reply_markup=keyboard, parse_mode="Markdown")
-        return
-        
-    buttons = []
-    for p in products:
-        buttons.append([InlineKeyboardButton(text=f"📦 {p['name']} - ${p['price']:.2f} ({p['stock']} disp.)", callback_data=f"prod_{p['id']}")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_catalogo")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_text(f"📱 **CATEGORÍA: {cat}**", reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data.startswith("prod_"))
-async def show_product_detail(callback: CallbackQuery):
-    await callback.answer()
-    prod_id = int(callback.data.split("_")[1])
-    
-    with get_db() as conn:
-        prod = conn.execute("SELECT * FROM products WHERE id = ?", (prod_id,)).fetchone()
-        
-    if not prod or prod["status"] == "🔴 Desactivado":
-        await callback.answer("❌ Producto no disponible.", show_alert=True)
-        return
-        
-    text = (
-        f"📦 **DETALLES DEL PRODUCTO**\n\n"
-        f"🏷️ **Nombre:** {prod['name']}\n"
-        f"📝 **Descripción:** {prod['description']}\n"
-        f"💰 **Precio:** ${prod['price']:.2f}\n"
-        f"📊 **Stock:** {prod['stock']}\n"
-    )
-    
-    buttons = []
-    if prod["stock"] > 0 and prod["status"] == "🟢 Disponible":
-        buttons.append([InlineKeyboardButton(text="🛒 Comprar Ahora", callback_data=f"buy_{prod['id']}")])
-    buttons.append([InlineKeyboardButton(text="⬅️ Atrás", callback_data=f"cat_{prod['category']}")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data.startswith("buy_"))
-async def confirm_purchase(callback: CallbackQuery):
-    await callback.answer()
-    prod_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    
-    with get_db() as conn:
-        prod = conn.execute("SELECT * FROM products WHERE id = ?", (prod_id,)).fetchone()
-        db_user = get_user(user_id)
-        
-    if not prod or prod["stock"] <= 0:
-        await callback.answer("❌ Producto agotado.", show_alert=True)
-        return
-        
-    remaining = db_user["balance"] - prod["price"]
-    
-    text = (
-        "🛒 **CONFIRMAR COMPRA**\n\n"
-        f"📦 Producto: {prod['name']}\n"
-        f"💰 Precio: ${prod['price']:.2f}\n"
-        f"💳 Tu saldo: ${db_user['balance']:.2f}\n"
-        f"💰 Saldo restante: ${remaining:.2f}\n"
-    )
-    
-    if remaining < 0:
-        text += "\n❌ **Saldo insuficiente.**"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Recargar Saldo", callback_data="menu_recargar")],
-            [InlineKeyboardButton(text="⬅️ Atrás", callback_data=f"prod_{prod_id}")]
-        ])
-    else:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Confirmar", callback_data=f"execbuy_{prod_id}"),
-             InlineKeyboardButton(text="❌ Cancelar", callback_data=f"prod_{prod_id}")]
-        ])
-        
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data.startswith("execbuy_"))
-async def execute_purchase(callback: CallbackQuery):
-    await callback.answer()
-    prod_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    
-    with get_db() as conn:
-        prod = conn.execute("SELECT * FROM products WHERE id = ?", (prod_id,)).fetchone()
-        db_user = get_user(user_id)
-        
-        if not prod or prod["stock"] <= 0 or db_user["balance"] < prod["price"]:
-            await callback.answer("❌ Error en la compra (Stock o saldo).", show_alert=True)
-            return
-            
-        success, res_val = update_balance(user_id, -prod["price"], "COMPRA")
-        if not success:
-            await callback.answer(f"❌ Error: {res_val}", show_alert=True)
-            return
-            
-        new_stock = prod["stock"] - 1
-        new_status = "🔴 Agotado" if new_stock == 0 else prod["status"]
-        conn.execute("UPDATE products SET stock = ?, status = ? WHERE id = ?", (new_stock, new_status, prod_id))
-        
-        conn.execute("""
-            INSERT INTO purchases (user_id, product_name, price, date, status)
-            VALUES (?, ?, ?, ?, ?)
-        """, (user_id, prod["name"], prod["price"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Completado"))
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📦 Mis Compras", callback_data="menu_compras")],
-        [InlineKeyboardButton(text="🏠 Menú Principal", callback_data="nav_inicio")]
-    ])
-    
-    await callback.message.edit_text(
-        f"🎉 **¡COMPRA EXITOSA EN LXZ STORE BEST!**\n\nHas adquirido: **{prod['name']}**",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
-
-@router.callback_query(F.data == "menu_perfil")
-async def show_profile(callback: CallbackQuery):
-    await callback.answer()
-    db_user = get_user(callback.from_user.id)
-    text = (
-        f"👤 **MI PERFIL - LXZ STORE BEST**\n\n"
-        f"🏷️ Nombre: {db_user['full_name']}\n"
-        f"🆔 ID: `{callback.from_user.id}`\n"
-        f"💰 Saldo: ${db_user['balance']:.2f}\n"
-        f"💎 Premium: {db_user['membership']}\n"
-    )
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📜 Historial de Saldo", callback_data="hist_saldo")],
-        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="nav_inicio")]
-    ])
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data == "menu_compras")
-async def show_purchases(callback: CallbackQuery):
-    await callback.answer()
-    with get_db() as conn:
-        purchases = conn.execute("SELECT * FROM purchases WHERE user_id = ? ORDER BY id DESC LIMIT 10", (callback.from_user.id,)).fetchall()
-        
-    text = "📦 **MIS COMPRAS**\n\n"
-    for p in purchases:
-        text += f"• **{p['product_name']}** - ${p['price']:.2f} ({p['date']})\n" if purchases else "No tienes compras."
-        
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_perfil")]])
-    await callback.message.edit_text(text if purchases else "📦 **MIS COMPRAS**\n\nNo tienes compras registradas.", reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data == "hist_saldo")
-async def show_credit_history(callback: CallbackQuery):
-    await callback.answer()
-    with get_db() as conn:
-        txs = conn.execute("SELECT * FROM credit_transactions WHERE user_id = ? ORDER BY id DESC LIMIT 10", (callback.from_user.id,)).fetchall()
-        
-    text = "📜 **HISTORIAL DE MOVIMIENTOS**\n\n"
-    for t in txs:
-        text += f"• [{t['type']}] {t['amount']:+.2f}$ (Saldo: ${t['new_balance']:.2f})\n"
-        
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_perfil")]])
-    await callback.message.edit_text(text if txs else "📜 Sin movimientos.", reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data == "menu_recargar")
-async def menu_recharge(callback: CallbackQuery):
-    await callback.answer()
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇵🇪 Yape / Plin", callback_data="rec_yape")],
-        [InlineKeyboardButton(text="💰 Binance USDT", callback_data="rec_binance")],
-        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="nav_inicio")]
-    ])
-    await callback.message.edit_text("💳 **RECARGAR SALDO**\n\nSelecciona el método:", reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data.in_({"rec_yape", "rec_binance"}))
-async def recharge_instructions(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    method = "Yape / Plin" if callback.data == "rec_yape" else "Binance USDT"
-    await state.update_data(recharge_method=method)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Cancelar", callback_data="menu_recargar")]])
-    await callback.message.edit_text(f"💳 **MÉTODO: {method}**\n\nEnvía tu comprobante en foto por este chat.", reply_markup=keyboard, parse_mode="Markdown")
-    await state.set_state(AdminStates.waiting_for_recharge_proof)
-
-@router.message(AdminStates.waiting_for_recharge_proof, F.photo)
-async def handle_recharge_proof(message: Message, state: FSMContext):
-    data = await state.get_data()
-    method = data.get("recharge_method", "Desconocido")
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO payments (user_id, amount, method, status, date) VALUES (?, ?, ?, 'PENDIENTE', ?)",
-                       (message.from_user.id, 0.0, method, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("✅ Comprobante enviado para verificación.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🏠 Menú", callback_data="nav_inicio")]]))
+    user = message.from_user
+    args = message.text.split()
+    referrer_id = int(args[1]) if len(args) > 1 and args[1].isdigit() else None
+    
+    db_upsert_user(user.id, user.full_name, user.username, referrer_id)
+    u = db_get_user(user.id)
+    
+    if u and u["status"] == "BANNED":
+        await message.answer("🚫 **CUENTA BLOQUEADA**\nNo tienes acceso autorizado a ⚡ LXZ STORE.", parse_mode="Markdown")
+        return
+        
+    maintenance = db_get_setting("maintenance", "OFF")
+    if maintenance == "ON" and not is_admin(user.id):
+        await message.answer("🔧 **SISTEMA EN MANTENIMIENTO**\n⚡ LXZ STORE se encuentra actualizándose. Vuelve pronto.", parse_mode="Markdown")
+        return
+        
+    text = (
+        f"⚡ **LXZ STORE**\n\n"
+        f"¡Hola, **{user.first_name}**! Bienvenido a nuestra tienda profesional.\n"
+        f"Selecciona una opción del menú para continuar:"
+    )
+    await message.answer(text, parse_mode="Markdown", reply_markup=main_menu_kb(user.id))
 
-@router.callback_query(F.data == "menu_cupones")
-async def menu_coupons(callback: CallbackQuery):
+@router.message(Command("menu"))
+async def cmd_menu(message: Message, state: FSMContext):
+    await state.clear()
+    u = db_get_user(message.from_user.id)
+    if u and u["status"] == "BANNED":
+        return
+    await message.answer("⚡ **LXZ STORE**\n\nMenú Principal:", parse_mode="Markdown", reply_markup=main_menu_kb(message.from_user.id))
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ No tienes permisos.")
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Usuarios", callback_data="admin_users"),
+         InlineKeyboardButton(text="📦 Productos", callback_data="admin_products")],
+        [InlineKeyboardButton(text="💳 Pagos", callback_data="admin_payments"),
+         InlineKeyboardButton(text="📊 Estadísticas", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="📢 Difusión", callback_data="admin_broadcast"),
+         InlineKeyboardButton(text="🎟️ Cupones", callback_data="admin_coupons")],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    await message.answer("⚙️ **PANEL DE ADMINISTRACIÓN**", parse_mode="Markdown", reply_markup=kb)
+
+@router.message(Command("owner"))
+async def cmd_owner(message: Message):
+    if not is_owner(message.from_user.id):
+        await message.answer("❌ No tienes permisos.")
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Dashboard", callback_data="owner_dashboard"),
+         InlineKeyboardButton(text="👥 Usuarios", callback_data="owner_users")],
+        [InlineKeyboardButton(text="📦 Productos", callback_data="owner_products"),
+         InlineKeyboardButton(text="💳 Pagos", callback_data="owner_payments")],
+        [InlineKeyboardButton(text="⚙️ Administradores", callback_data="owner_admins"),
+         InlineKeyboardButton(text="🔧 Configuración", callback_data="owner_settings")],
+        [InlineKeyboardButton(text="🎟️ Cupones", callback_data="owner_coupons"),
+         InlineKeyboardButton(text="📢 Difusión", callback_data="owner_broadcast")],
+        [InlineKeyboardButton(text="🛡️ Seguridad", callback_data="owner_security"),
+         InlineKeyboardButton(text="📜 Registros", callback_data="owner_logs")],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    await message.answer("👑 **PANEL OWNER**", parse_mode="Markdown", reply_markup=kb)
+
+@router.callback_query(F.data == "menu_main")
+async def cb_menu_main(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    u = db_get_user(callback.from_user.id)
+    if u and u["status"] == "BANNED":
+        await callback.answer("Cuenta bloqueada", show_alert=True)
+        return
+    text = "⚡ **LXZ STORE**\n\nMenú Principal:"
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=main_menu_kb(callback.from_user.id))
+    except TelegramBadRequest:
+        await callback.message.answer(text, parse_mode="Markdown", reply_markup=main_menu_kb(callback.from_user.id))
     await callback.answer()
-    await callback.message.edit_text("🎟️ **CUPONES**\n\nPróximamente activo.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="nav_inicio")]]))
+
+@router.callback_query(F.data == "menu_profile")
+async def cb_profile(callback: CallbackQuery):
+    u = db_get_user(callback.from_user.id)
+    if not u:
+        await callback.answer("Usuario no encontrado", show_alert=True)
+        return
+    text = (
+        f"👤 **MI PERFIL**\n\n"
+        f"📌 Nombre: `{u['name']}`\n"
+        f"🔖 Username: `@{u['username'] or 'Sin username'}`\n"
+        f"🆔 ID: `{u['user_id']}`\n"
+        f"💰 Saldo: `${u['balance']:.2f} USD`\n"
+        f"💎 Premium: `{u['premium'] or 'Inactivo'}`\n"
+        f"📦 Compras: `{u['purchases_count']}`\n"
+        f"💵 Total gastado: `${u['total_spent']:.2f} USD`\n"
+        f"📅 Fecha de registro: `{u['registered_at'][:10]}`"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == "menu_purchases")
+async def cb_purchases(callback: CallbackQuery):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM purchases WHERE user_id = ? ORDER BY id DESC LIMIT 5", (callback.from_user.id,))
+    purchases = cursor.fetchall()
+    conn.close()
+    
+    if not purchases:
+        text = "📦 **MIS COMPRAS**\n\nAún no tienes compras registradas."
+    else:
+        text = "📦 **TUS ÚLTIMAS COMPRAS**\n\n"
+        for p in purchases:
+            text += f"📦 `{p['product_name']}`\n💵 Precio: `${p['total']}` | 📅 Fecha: `{p['purchased_at'][:10]}`\n📌 Estado: `{p['status']}`\n\n"
+            
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == "menu_recharge")
+async def cb_recharge(callback: CallbackQuery):
+    yape = db_get_setting("yape_number", "999999999")
+    binance = db_get_setting("binance_wallet", "T_USDT_WALLET")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇵🇪 Yape / Plin", callback_data="recharge_yape"),
+         InlineKeyboardButton(text="💰 Binance USDT", callback_data="recharge_binance")],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main"),
+         InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_main")]
+    ])
+    text = (
+        f"💳 **RECARGAR SALDO**\n\n"
+        f"Selecciona el método de pago:\n\n"
+        f"🇵🇪 **Yape / Plin:** `{yape}`\n"
+        f"💰 **Binance USDT:** `{binance}`"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data.in_({"recharge_yape", "recharge_binance"}))
+async def cb_recharge_method(callback: CallbackQuery, state: FSMContext):
+    method = "Yape/Plin" if "yape" in callback.data else "Binance"
+    await state.update_data(recharge_method=method)
+    await state.set_state(StoreStates.waiting_for_recharge_amount)
+    text = f"💳 **RECARGA - {method.upper()}**\n\nIngresa el monto exacto en USD que vas a recargar (Ej: 10):"
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=custom_back_kb("menu_recharge"))
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.message(StoreStates.waiting_for_recharge_amount, F.text)
+async def process_recharge_amount(message: Message, state: FSMContext):
+    try:
+        amount = float(message.text.strip())
+        if amount <= 0:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Ingresa un número válido mayor a 0.")
+        return
+        
+    await state.update_data(recharge_amount=amount)
+    await state.set_state(StoreStates.waiting_for_recharge_voucher)
+    await message.answer("📸 Envía ahora la **foto del comprobante** de pago:", parse_mode="Markdown", reply_markup=custom_back_kb("menu_recharge"))
+
+@router.message(StoreStates.waiting_for_recharge_voucher, F.photo)
+async def process_recharge_voucher(message: Message, state: FSMContext):
+    data = await state.get_data()
+    amount = data.get("recharge_amount")
+    method = data.get("recharge_method")
+    photo_id = message.photo[-1].file_id
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    now = datetime.datetime.now().isoformat()
+    cursor.execute("""
+        INSERT INTO payments (user_id, amount, method, voucher_id, status, created_at)
+        VALUES (?, ?, ?, ?, 'PENDING', ?)
+    """, (message.from_user.id, amount, method, photo_id, now))
+    payment_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    db_log_action(message.from_user.id, "RECHARGE_REQUEST", f"Solicitó recarga de ${amount} por {method}")
+    await state.clear()
+    
+    await message.answer("✅ **SOLICITUD ENVIADA**\n\nTu comprobante ha sido enviado y está pendiente de aprobación por el equipo.", parse_mode="Markdown", reply_markup=back_home_kb())
+    
+    admin_text = (
+        f"💳 **NUEVO PAGO PENDIENTE**\n\n"
+        f"🆔 ID Solicitud: `{payment_id}`\n"
+        f"👤 Usuario: `{message.from_user.full_name}` (`{message.from_user.id}`)\n"
+        f"💵 Monto: `${amount} USD`\n"
+        f"🛠️ Método: `{method}`"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Aprobar", callback_data=f"pay_approve_{payment_id}"),
+         InlineKeyboardButton(text="❌ Rechazar", callback_data=f"pay_reject_{payment_id}")]
+    ])
+    try:
+        await bot.send_photo(chat_id=OWNER_ID, photo=photo_id, caption=admin_text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        pass
+
+@router.callback_query(F.data.startswith("pay_approve_"))
+async def cb_pay_approve(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+        
+    pay_id = int(callback.data.split("_")[2])
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM payments WHERE id = ?", (pay_id,))
+    pay = cursor.fetchone()
+    
+    if not pay or pay["status"] != "PENDING":
+        conn.close()
+        await callback.answer("❌ El pago ya fue procesado o no existe.", show_alert=True)
+        return
+        
+    cursor.execute("UPDATE payments SET status = 'APPROVED', admin_id = ? WHERE id = ?", (callback.from_user.id, pay_id))
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (pay["amount"], pay["user_id"]))
+    conn.commit()
+    conn.close()
+    
+    db_log_action(callback.from_user.id, "APPROVE_PAYMENT", f"Aprobó pago #{pay_id} de ${pay['amount']} al usuario {pay['user_id']}")
+    
+    try:
+        await bot.send_message(pay["user_id"], f"✅ **PAGO APROBADO**\n\nTu recarga de **${pay['amount']} USD** ha sido acreditada correctamente.", parse_mode="Markdown")
+    except Exception:
+        pass
+        
+    try:
+        await callback.message.edit_caption(caption=callback.message.caption + "\n\n✅ **APROBADO**", parse_mode="Markdown")
+    except TelegramBadRequest:
+        pass
+    await callback.answer("Pago aprobado con éxito.")
+
+@router.callback_query(F.data.startswith("pay_reject_"))
+async def cb_pay_reject(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+        
+    pay_id = int(callback.data.split("_")[2])
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM payments WHERE id = ?", (pay_id,))
+    pay = cursor.fetchone()
+    
+    if not pay or pay["status"] != "PENDING":
+        conn.close()
+        await callback.answer("❌ El pago ya fue procesado o no existe.", show_alert=True)
+        return
+        
+    cursor.execute("UPDATE payments SET status = 'REJECTED', admin_id = ? WHERE id = ?", (callback.from_user.id, pay_id))
+    conn.commit()
+    conn.close()
+    
+    db_log_action(callback.from_user.id, "REJECT_PAYMENT", f"Rechazó pago #{pay_id} del usuario {pay['user_id']}")
+    
+    try:
+        await bot.send_message(pay["user_id"], f"❌ **PAGO RECHAZADO**\n\nTu solicitud de recarga de **${pay['amount']} USD** fue rechazada. Contacta a soporte.", parse_mode="Markdown")
+    except Exception:
+        pass
+        
+    try:
+        await callback.message.edit_caption(caption=callback.message.caption + "\n\n❌ **RECHAZADO**", parse_mode="Markdown")
+    except TelegramBadRequest:
+        pass
+    await callback.answer("Pago rechazado.")
+
+@router.callback_query(F.data == "menu_coupons")
+async def cb_coupons(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(StoreStates.waiting_for_coupon)
+    text = "🎟️ **CUPONES DE DESCUENTO**\n\nEnvía el código de tu cupón:"
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.message(StoreStates.waiting_for_coupon, F.text)
+async def process_coupon(message: Message, state: FSMContext):
+    code = message.text.strip().upper()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM coupons WHERE code = ? AND status = 'ACTIVE'", (code,))
+    coupon = cursor.fetchone()
+    
+    if not coupon:
+        conn.close()
+        await message.answer("❌ Cupón inválido o expirado.", reply_markup=back_home_kb())
+        await state.clear()
+        return
+        
+    cursor.execute("SELECT * FROM coupon_usage WHERE user_id = ? AND code = ?", (message.from_user.id, code))
+    used = cursor.fetchone()
+    if used:
+        conn.close()
+        await message.answer("❌ Ya has utilizado este cupón anteriormente.", reply_markup=back_home_kb())
+        await state.clear()
+        return
+        
+    cursor.execute("INSERT INTO coupon_usage (user_id, code) VALUES (?, ?)", (message.from_user.id, code))
+    cursor.execute("UPDATE coupons SET uses_left = uses_left - 1 WHERE code = ?", (code,))
+    conn.commit()
+    conn.close()
+    
+    await state.clear()
+    await message.answer(f"✅ **CUPÓN CANJEADO**\n\nEl cupón `{code}` se aplicó correctamente.", parse_mode="Markdown", reply_markup=back_home_kb())
 
 @router.callback_query(F.data == "menu_premium")
-async def menu_premium(callback: CallbackQuery):
+async def cb_premium(callback: CallbackQuery):
+    u = db_get_user(callback.from_user.id)
+    status = f"💎 Premium ACTIVO ({u['premium']})" if u["premium"] else "💎 Premium INACTIVO"
+    text = f"{status}\n\nObtén beneficios exclusivos, descuentos en todo el catálogo y soporte prioritario."
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
     await callback.answer()
-    db_user = get_user(callback.from_user.id)
-    await callback.message.edit_text(f"💎 **PREMIUM**\n\nEstado: **{db_user['membership']}**", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="nav_inicio")]]))
 
-@router.callback_query(F.data == "panel_admin")
-async def admin_panel(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return await callback.answer("❌ Denegado.", show_alert=True)
+@router.callback_query(F.data == "menu_support")
+async def cb_support(callback: CallbackQuery):
+    support_username = db_get_setting("support_username", "@RayoFixSupport")
+    text = f"📞 **SOPORTE OFICIAL**\n\nPara cualquier consulta o asistencia técnica:\n\n💬 {support_username}"
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
     await callback.answer()
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Usuarios", callback_data="adm_users"), InlineKeyboardButton(text="📦 Productos", callback_data="adm_products")],
-        [InlineKeyboardButton(text="⬅️ Menú Principal", callback_data="nav_inicio")]
+
+@router.callback_query(F.data == "menu_channel")
+async def cb_channel(callback: CallbackQuery):
+    channel_url = db_get_setting("channel_url", "https://t.me/TuCanal")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 Abrir Canal", url=channel_url)],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
     ])
-    await callback.message.edit_text("🛡️ **PANEL ADMIN - LXZ STORE BEST**", reply_markup=keyboard, parse_mode="Markdown")
-
-@router.callback_query(F.data == "panel_owner")
-async def owner_panel(callback: CallbackQuery):
-    if not is_owner(callback.from_user.id):
-        return await callback.answer("❌ Denegado.", show_alert=True)
+    text = "📢 **CANAL OFICIAL**\n\nMantente al día con nuestras novedades, ofertas y stock actualizado."
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
     await callback.answer()
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Dashboard", callback_data="owner_dash"), InlineKeyboardButton(text="🔧 Mantenimiento", callback_data="owner_maint")],
-        [InlineKeyboardButton(text="🛡️ Panel Admin", callback_data="panel_admin"), InlineKeyboardButton(text="⬅️ Menú", callback_data="nav_inicio")]
-    ])
-    await callback.message.edit_text("👑 **PANEL OWNER**", reply_markup=keyboard, parse_mode="Markdown")
 
-@router.callback_query(F.data == "owner_dash")
-async def owner_dashboard(callback: CallbackQuery):
-    if not is_owner(callback.from_user.id):
+@router.callback_query(F.data == "menu_catalog")
+async def cb_catalog(callback: CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Android", callback_data="category_android"),
+         InlineKeyboardButton(text="🍎 iOS / iPhone", callback_data="category_ios")],
+        [InlineKeyboardButton(text="💻 Windows / PC", callback_data="category_pc")],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text("🛍️ **CATÁLOGO DE PRODUCTOS**\n\nSelecciona una categoría:", parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("category_"))
+async def cb_category(callback: CallbackQuery):
+    cat_key = callback.data.split("_")[1]
+    if cat_key == "pc":
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_catalog"),
+             InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+        ])
+        try:
+            await callback.message.edit_text("💻 **Windows / PC**\n\n🚧 Próximamente disponible.", parse_mode="Markdown", reply_markup=kb)
+        except TelegramBadRequest:
+            pass
+        await callback.answer()
         return
+        
+    cat_name = "Android" if cat_key == "android" else "iOS"
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, price, stock FROM products WHERE category = ? AND status = 'ACTIVE'", (cat_name,))
+    products = cursor.fetchall()
+    conn.close()
+    
+    kb = []
+    for p in products:
+        stock_label = "🟢" if p["stock"] else "🔴"
+        kb.append([InlineKeyboardButton(text=f"{stock_label} {p['name']} - ${p['price']}", callback_data=f"product_{p['id']}")])
+    kb.append([InlineKeyboardButton(text="⬅️ Atrás", callback_data="menu_catalog"),
+               InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")])
+               
+    try:
+        await callback.message.edit_text(f"📂 Categoría: **{cat_name}**\n\nElige un producto:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    except TelegramBadRequest:
+        pass
     await callback.answer()
-    with get_db() as conn:
-        users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-        sales = conn.execute("SELECT COUNT(*) FROM purchases").fetchone()[0]
-        income = conn.execute("SELECT SUM(price) FROM purchases").fetchone()[0] or 0.0
-    text = f"📊 **DASHBOARD**\n\n👥 Usuarios: {users}\n🛒 Ventas: {sales}\n💰 Ingresos: ${income:.2f}"
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="panel_owner")]]), parse_mode="Markdown")
+
+@router.callback_query(F.data.startswith("product_"))
+async def cb_product_detail(callback: CallbackQuery):
+    prod_id = int(callback.data.split("_")[1])
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products WHERE id = ?", (prod_id,))
+    p = cursor.fetchone()
+    conn.close()
+    
+    if not p:
+        await callback.answer("Producto no encontrado", show_alert=True)
+        return
+        
+    stock_status = "🟢 Disponible" if p["stock"] else "🔴 Agotado"
+    text = (
+        f"📦 **{p['name']}**\n\n"
+        f"📝 {p['description']}\n\n"
+        f"💵 Precio: **${p['price']} USD**\n"
+        f"📊 Stock: {stock_status}"
+    )
+    kb = [
+        [InlineKeyboardButton(text="🛒 Comprar", callback_data=f"buy_{p['id']}")],
+        [InlineKeyboardButton(text="⬅️ Atrás", callback_data=f"category_{p['category'].lower()}"),
+         InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ]
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("buy_"))
+async def cb_buy(callback: CallbackQuery):
+    prod_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM products WHERE id = ?", (prod_id,))
+    p = cursor.fetchone()
+    u = db_get_user(user_id)
+    
+    if not p or not p["stock"]:
+        conn.close()
+        await callback.answer("❌ Producto sin stock disponible.", show_alert=True)
+        return
+        
+    price = p["price"]
+    if u["premium"]:
+        price = p["premium_price"] if "premium_price" in p.keys() and p["premium_price"] else price
+        
+    if u["balance"] < price:
+        conn.close()
+        await callback.answer("❌ Saldo insuficiente. Recarga tu cuenta.", show_alert=True)
+        return
+        
+    stock_items = p["stock"].split("\n")
+    delivered_item = stock_items.pop(0).strip()
+    new_stock = "\n".join(stock_items) if stock_items else ""
+    
+    new_balance = u["balance"] - price
+    new_spent = u["total_spent"] + price
+    new_purchases = u["purchases_count"] + 1
+    
+    cursor.execute("UPDATE users SET balance = ?, total_spent = ?, purchases_count = ? WHERE user_id = ?", (new_balance, new_spent, new_purchases, user_id))
+    cursor.execute("UPDATE products SET stock = ? WHERE id = ?", (new_stock, prod_id))
+    cursor.execute("""
+        INSERT INTO purchases (user_id, product_id, product_name, price, discount, total, coupon, purchased_at, status)
+        VALUES (?, ?, ?, ?, 0.0, ?, 'NINGUNO', ?, 'COMPLETED')
+    """, (user_id, prod_id, p["name"], price, price, datetime.datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    
+    db_log_action(user_id, "PURCHASE", f"Compró {p['name']} por ${price}")
+    
+    text = (
+        f"✅ **COMPRA REALIZADA**\n\n"
+        f"📦 Producto: `{p['name']}`\n"
+        f"🔑 **Entrega:**\n`{delivered_item}`\n\n"
+        f"💵 Pagado: `${price:.2f} USD`\n"
+        f"💰 Saldo restante: `${new_balance:.2f} USD`\n"
+        f"📅 Fecha: `{datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}`\n\n"
+        f"Gracias por comprar en ⚡ LXZ STORE."
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
+    await callback.answer("¡Compra exitosa!")
+
+@router.callback_query(F.data == "admin_panel")
+async def cb_admin_panel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👥 Usuarios", callback_data="admin_users"),
+         InlineKeyboardButton(text="📦 Productos", callback_data="admin_products")],
+        [InlineKeyboardButton(text="💳 Pagos", callback_data="admin_payments"),
+         InlineKeyboardButton(text="📊 Estadísticas", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="📢 Difusión", callback_data="admin_broadcast"),
+         InlineKeyboardButton(text="🎟️ Cupones", callback_data="admin_coupons")],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text("⚙️ **PANEL DE ADMINISTRACIÓN**", parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_stats")
+async def cb_admin_stats(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users WHERE premium IS NOT NULL")
+    premium_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM users WHERE status = 'BANNED'")
+    banned_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM products")
+    total_products = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM purchases")
+    total_sales = cursor.fetchone()[0]
+    cursor.execute("SELECT SUM(total) FROM purchases")
+    total_revenue = cursor.fetchone()[0] or 0.0
+    cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'PENDING'")
+    pending_payments = cursor.fetchone()[0]
+    conn.close()
+    
+    text = (
+        f"📊 **ESTADÍSTICAS ADMIN**\n\n"
+        f"👥 Total Usuarios: `{total_users}`\n"
+        f"💎 Premium: `{premium_users}`\n"
+        f"🚫 Baneados: `{banned_users}`\n"
+        f"📦 Productos: `{total_products}`\n"
+        f"🛒 Ventas: `{total_sales}`\n"
+        f"💰 Ingresos: `${total_revenue:.2f} USD`\n"
+        f"💳 Pagos pendientes: `{pending_payments}`"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="admin_panel"),
+         InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_users")
+async def cb_admin_users(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Dar Créditos", callback_data="adm_add_cred"),
+         InlineKeyboardButton(text="➖ Quitar Créditos", callback_data="adm_rem_cred")],
+        [InlineKeyboardButton(text="🚫 Banear", callback_data="adm_ban"),
+         InlineKeyboardButton(text="✅ Desbanear", callback_data="adm_unban")],
+        [InlineKeyboardButton(text="🔍 Buscar Usuario", callback_data="adm_search_user")],
+        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="admin_panel"),
+         InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text("👥 **GESTIÓN DE USUARIOS**", parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == "adm_add_cred")
+async def cb_adm_add_cred(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        return
+    await state.set_state(StoreStates.waiting_for_add_credit_id)
+    await callback.message.edit_text("➕ **DAR CRÉDITOS**\n\nIngresa el **ID del usuario**:", parse_mode="Markdown", reply_markup=custom_back_kb("admin_users"))
+    await callback.answer()
+
+@router.message(StoreStates.waiting_for_add_credit_id, F.text)
+async def process_add_credit_id(message: Message, state: FSMContext):
+    try:
+        target_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ ID inválido.")
+        return
+    u = db_get_user(target_id)
+    if not u:
+        await message.answer("❌ Usuario no encontrado en la base de datos.")
+        return
+    await state.update_data(target_user_id=target_id)
+    await state.set_state(StoreStates.waiting_for_add_credit_amount)
+    await message.answer(f"👤 Usuario encontrado: `{u['name']}`\n\nIngresa la cantidad de créditos a **agregar**:", parse_mode="Markdown")
+
+@router.message(StoreStates.waiting_for_add_credit_amount, F.text)
+async def process_add_credit_amount(message: Message, state: FSMContext):
+    try:
+        amount = float(message.text.strip())
+        if amount <= 0:
+            raise ValueError()
+    except ValueError:
+        await message.answer("❌ Cantidad inválida.")
+        return
+    data = await state.get_data()
+    target_id = data.get("target_user_id")
+    
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_id))
+    conn.commit()
+    u = db_get_user(target_id)
+    conn.close()
+    
+    await state.clear()
+    await message.answer(f"✅ Se agregaron `${amount}` al usuario `{target_id}`.\nSaldo actual: `${u['balance']:.2f}`", parse_mode="Markdown", reply_markup=back_home_kb())
+    try:
+        await bot.send_message(target_id, f"💰 **SALDO ACTUALIZADO**\n\nSe agregaron: `+${amount}`\nSaldo actual: `${u['balance']:.2f} USD`", parse_mode="Markdown")
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "admin_broadcast")
+async def cb_admin_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+    await state.set_state(StoreStates.waiting_for_broadcast)
+    try:
+        await callback.message.edit_text("📢 **DIFUSIÓN MASIVA**\n\nEnvía el mensaje que deseas transmitir a todos los usuarios:", parse_mode="Markdown", reply_markup=custom_back_kb("admin_panel"))
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.message(StoreStates.waiting_for_broadcast)
+async def process_broadcast(message: Message, state: FSMContext):
+    await state.clear()
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users WHERE status != 'BANNED'")
+    users = cursor.fetchall()
+    conn.close()
+    
+    sent = 0
+    failed = 0
+    status_msg = await message.answer("📢 Iniciando difusión...")
+    
+    for row in users:
+        try:
+            await message.copy_to(chat_id=row["user_id"])
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+            
+    try:
+        await status_msg.edit_text(f"📢 **DIFUSIÓN COMPLETADA**\n\n✅ Enviados: `{sent}`\n❌ Fallidos: `{failed}`", parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
+
+@router.callback_query(F.data == "owner_panel")
+async def cb_owner_panel(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos de Owner.", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 Dashboard", callback_data="owner_dashboard"),
+         InlineKeyboardButton(text="⚙️ Configuración", callback_data="owner_settings")],
+        [InlineKeyboardButton(text="👥 Administradores", callback_data="owner_admins"),
+         InlineKeyboardButton(text="🛡️ Mantenimiento ON/OFF", callback_data="owner_maint")],
+        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text("👑 **PANEL OWNER**", parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+@router.callback_query(F.data == "owner_dashboard")
+async def cb_owner_dashboard(callback: CallbackQuery):
+    if not is_owner(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    u_count = cursor.fetchone()[0]
+    cursor.execute("SELECT SUM(total) FROM purchases")
+    rev = cursor.fetchone()[0] or 0.0
+    conn.close()
+    
+    text = f"📊 **OWNER DASHBOARD**\n\n👥 Usuarios Totales: `{u_count}`\n💵 Ingresos Totales: `${rev:.2f} USD`"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="owner_panel"),
+         InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
 
 @router.callback_query(F.data == "owner_maint")
-async def owner_maintenance_toggle(callback: CallbackQuery):
+async def cb_owner_maint(callback: CallbackQuery):
     if not is_owner(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
         return
-    await callback.answer()
-    current = get_setting("maintenance")
-    new_val = "OFF" if current == "ON" else "ON"
-    set_setting("maintenance", new_val)
-    await callback.message.edit_text(f"🔧 Mantenimiento: **{new_val}**", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="panel_owner")]]), parse_mode="Markdown")
+    current = db_get_setting("maintenance", "OFF")
+    new_status = "ON" if current == "OFF" else "OFF"
+    db_set_setting("maintenance", new_status)
+    await callback.answer(f"Modo Mantenimiento: {new_status}", show_alert=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Atrás", callback_data="owner_panel"),
+         InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+    ])
+    try:
+        await callback.message.edit_text(f"👑 **PANEL OWNER**\n\nMantenimiento actual: **{new_status}**", parse_mode="Markdown", reply_markup=kb)
+    except TelegramBadRequest:
+        pass
 
-@router.callback_query(F.data == "adm_users")
-async def adm_users_menu(callback: CallbackQuery):
+@router.callback_query(F.data.in_({
+    "admin_products", "admin_payments", "admin_coupons",
+    "owner_users", "owner_products", "owner_payments",
+    "owner_admins", "owner_settings", "owner_coupons",
+    "owner_broadcast", "owner_security", "owner_logs",
+    "adm_rem_cred", "adm_ban", "adm_unban", "adm_search_user"
+}))
+async def cb_stub_sections(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
+        await callback.answer("❌ No tienes permisos.", show_alert=True)
         return
+    try:
+        await callback.message.edit_text("🛠️ Sección funcional en desarrollo o gestionada vía comandos directos.", parse_mode="Markdown", reply_markup=back_home_kb())
+    except TelegramBadRequest:
+        pass
     await callback.answer()
-    await callback.message.edit_text("👥 Usa comandos: `/addcredit ID CANT`, `/ban ID`", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="panel_admin")]]), parse_mode="Markdown")
-
-@router.callback_query(F.data == "adm_products")
-async def adm_products_menu(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        return
-    await callback.answer()
-    with get_db() as conn:
-        prods = conn.execute("SELECT * FROM products").fetchall()
-    text = "📦 **PRODUCTOS**\n\n" + "\n".join([f"ID {p['id']} - {p['name']} (${p['price']})" for p in prods])
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Atrás", callback_data="panel_admin")]]), parse_mode="Markdown")
-
-@router.message(Command("addcredit"))
-async def cmd_addcredit(message: Message):
-    user_id = message.from_user.id
-    
-    # Depuración directa: si eres el owner o tu ID es 7939709543, pasa obligatoriamente
-    if user_id != OWNER_ID and user_id != 7939709543:
-        if not is_admin(user_id):
-            await message.answer(f"❌ Acceso denegado. Tu ID es `{user_id}` y no estás registrado como admin/owner.", parse_mode="Markdown")
-            return
-        
-    args = message.text.split()
-    if len(args) < 3:
-        return await message.answer("⚠️ **Uso correcto:** `/addcredit ID CANTIDAD`\n*Ejemplo:* `/addcredit 7939709543 500`", parse_mode="Markdown")
-    
-    try:
-        target_id = int(args[1])
-        amount = float(args[2].replace(",", "."))
-    except ValueError:
-        return await message.answer("❌ El ID y la cantidad deben ser números válidos.", parse_mode="Markdown")
-    
-    # Validar si el usuario está registrado en la base de datos
-    db_target = get_user(target_id)
-    if not db_target:
-        return await message.answer(f"❌ El usuario con ID `{target_id}` no está registrado. Debe abrir el bot y presionar `/start` primero.", parse_mode="Markdown")
-        
-    success, res = update_balance(target_id, amount, "ADMIN_ADD", user_id)
-    if success:
-        await message.answer(f"✅ Se han acreditado **${amount:.2f}** correctamente.\n👤 Usuario: `{target_id}`\n💰 Nuevo saldo: **${res:.2f}**", parse_mode="Markdown")
-    else:
-        await message.answer(f"❌ Error al actualizar saldo: {res}")
-
-@router.message(Command("ban"))
-async def cmd_ban(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Uso: `/ban ID`", parse_mode="Markdown")
-    
-    try:
-        target_id = int(args[1])
-    except ValueError:
-        return await message.answer("❌ El ID debe ser un número válido.")
-        
-    with get_db() as conn:
-        conn.execute("UPDATE users SET banned = 1 WHERE user_id = ?", (target_id,))
-    await message.answer("🚫 Usuario baneado correctamente.")
-
-@router.message(Command("unban"))
-async def cmd_unban(message: Message):
-    if not is_admin(message.from_user.id):
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Uso: `/unban ID`", parse_mode="Markdown")
-        
-    try:
-        target_id = int(args[1])
-    except ValueError:
-        return await message.answer("❌ El ID debe ser un número válido.")
-        
-    with get_db() as conn:
-        conn.execute("UPDATE users SET banned = 0 WHERE user_id = ?", (target_id,))
-    await message.answer("✅ Usuario desbaneado correctamente.")
 
 async def main():
-    init_db()
-    with get_db() as conn:
-        if conn.execute("SELECT COUNT(*) FROM products").fetchone()[0] == 0:
-            conn.execute("INSERT INTO products (category, name, description, price, stock, status) VALUES ('ANDROID', 'Script VIP Free Fire LXZ', 'Aimbot + ESP', 5.00, 10, '🟢 Disponible')")
-            
-    bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
-    dp.include_router(router)
-    
+    if not BOT_TOKEN:
+        logging.error("BOT_TOKEN no configurado.")
+        return
     await bot.delete_webhook(drop_pending_updates=True)
-    print("⚡ LXZ STORE BEST - Bot iniciado exitosamente.")
-    await dp.start_polling(bot)
+    logging.info("⚡ LXZ STORE iniciado correctamente en modo Polling...")
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+        logging.info("🛑 Bot detenido y sesión cerrada correctamente.")
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        print("Bot detenido.")
+        logging.info("👋 Bot detenido manualmente por el usuario.")
