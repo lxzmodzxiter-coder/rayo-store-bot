@@ -1,183 +1,211 @@
 import sqlite3
 import datetime
-from contextlib import contextmanager
+import os
 
 DB_NAME = "store.db"
 
-@contextmanager
-def get_db():
+def get_connection():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    return conn
 
 def init_db():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        
-        # Tabla de Usuarios
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                full_name TEXT,
-                balance REAL DEFAULT 0.0,
-                membership TEXT DEFAULT 'Inactiva',
-                membership_expiry TEXT,
-                banned INTEGER DEFAULT 0,
-                created_at TEXT
-            )
-        """)
-        
-        # Tabla de Productos
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS products (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT,
-                name TEXT,
-                description TEXT,
-                price REAL,
-                stock INTEGER,
-                status TEXT DEFAULT '🟢 Disponible'
-            )
-        """)
-        
-        # Tabla de Compras
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS purchases (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                product_name TEXT,
-                price REAL,
-                date TEXT,
-                status TEXT,
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
-            )
-        """)
-        
-        # Tabla de Pagos / Recargas
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS payments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount REAL,
-                method TEXT,
-                status TEXT DEFAULT 'PENDIENTE',
-                date TEXT,
-                FOREIGN KEY(user_id) REFERENCES users(user_id)
-            )
-        """)
-        
-        # Tabla de Cupones
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS coupons (
-                code TEXT PRIMARY KEY,
-                discount_type TEXT,
-                value REAL,
-                uses_left INTEGER,
-                expires_at TEXT
-            )
-        """)
-        
-        # Tabla de Administradores y Permisos
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS admins (
-                user_id INTEGER PRIMARY KEY,
-                permissions TEXT
-            )
-        """)
-        
-        # Tabla de Transacciones de Saldo
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS credit_transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                amount REAL,
-                old_balance REAL,
-                new_balance REAL,
-                type TEXT,
-                admin_id INTEGER,
-                date TEXT
-            )
-        """)
-        
-        # Tabla de Logs de Auditoría
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS admin_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                actor_id INTEGER,
-                action TEXT,
-                target_id INTEGER,
-                details TEXT,
-                date TEXT
-            )
-        """)
-        
-        # Tabla de Configuración
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        """)
-        
-        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance', 'OFF')")
-        
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_banned ON users(banned)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_cat ON products(category)")
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            username TEXT,
+            registered_at TEXT,
+            balance REAL DEFAULT 0.0,
+            premium TEXT DEFAULT NULL,
+            purchases_count INTEGER DEFAULT 0,
+            total_spent REAL DEFAULT 0.0,
+            referred_by INTEGER DEFAULT NULL,
+            status TEXT DEFAULT 'ACTIVE',
+            last_activity TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT,
+            name TEXT,
+            description TEXT,
+            price REAL,
+            premium_price REAL,
+            stock TEXT,
+            status TEXT DEFAULT 'ACTIVE',
+            is_offer INTEGER DEFAULT 0,
+            image_url TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            product_id INTEGER,
+            product_name TEXT,
+            price REAL,
+            discount REAL,
+            total REAL,
+            coupon TEXT,
+            purchased_at TEXT,
+            status TEXT DEFAULT 'COMPLETED'
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            method TEXT,
+            voucher_id TEXT,
+            status TEXT DEFAULT 'PENDING',
+            created_at TEXT,
+            admin_id INTEGER DEFAULT NULL,
+            rejection_reason TEXT DEFAULT NULL
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS coupons (
+            code TEXT PRIMARY KEY,
+            type TEXT,
+            value REAL,
+            uses_left INTEGER,
+            expires_at TEXT,
+            status TEXT DEFAULT 'ACTIVE'
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS coupon_usage (
+            user_id INTEGER,
+            code TEXT,
+            PRIMARY KEY (user_id, code)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS admins (
+            user_id INTEGER PRIMARY KEY,
+            role TEXT DEFAULT 'ADMIN',
+            added_by INTEGER,
+            added_at TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS referrals (
+            inviter_id INTEGER,
+            invited_id INTEGER,
+            reward REAL,
+            status TEXT DEFAULT 'COMPLETED',
+            PRIMARY KEY (inviter_id, invited_id)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS favorites (
+            user_id INTEGER,
+            product_id INTEGER,
+            PRIMARY KEY (user_id, product_id)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            action TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            message TEXT,
+            status TEXT DEFAULT 'OPEN',
+            created_at TEXT
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cart (
+            user_id INTEGER,
+            product_id INTEGER,
+            quantity INTEGER DEFAULT 1,
+            PRIMARY KEY (user_id, product_id)
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+    
+init_db()
 
-def get_user(user_id: int):
-    with get_db() as conn:
-        return conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+def db_get_user(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
 
-def register_user(user_id: int, username: str, full_name: str):
-    with get_db() as conn:
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute("""
-            INSERT INTO users (user_id, username, full_name, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, full_name=excluded.full_name
-        """, (user_id, username, full_name, now))
+def db_upsert_user(user_id, name, username, referrer_id=None):
+    conn = get_connection()
+    cursor = conn.cursor()
+    now = datetime.datetime.now().isoformat()
+    user = db_get_user(user_id)
+    if not user:
+        cursor.execute("""
+            INSERT INTO users (user_id, name, username, registered_at, balance, status, last_activity, referred_by)
+            VALUES (?, ?, ?, ?, 0.0, 'ACTIVE', ?, ?)
+        """, (user_id, name, username, now, now, referrer_id))
+        if referrer_id and referrer_id != user_id:
+            cursor.execute("INSERT OR IGNORE INTO referrals (inviter_id, invited_id, reward) VALUES (?, ?, 1.0)", (referrer_id, user_id))
+            cursor.execute("UPDATE users SET balance = balance + 1.0 WHERE user_id = ?", (referrer_id,))
+    else:
+        cursor.execute("UPDATE users SET name = ?, username = ?, last_activity = ? WHERE user_id = ?", (name, username, now, user_id))
+    conn.commit()
+    conn.close()
 
-def update_balance(user_id: int, amount: float, tx_type: str, admin_id: int = None):
-    with get_db() as conn:
-        user = conn.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,)).fetchone()
-        if not user:
-            return False, "Usuario no encontrado"
-        old_bal = user["balance"]
-        new_bal = old_bal + amount
-        if new_bal < 0:
-            return False, "Saldo insuficiente / Negativo no permitido"
-        
-        conn.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_bal, user_id))
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute("""
-            INSERT INTO credit_transactions (user_id, amount, old_balance, new_balance, type, admin_id, date)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, amount, old_bal, new_bal, tx_type, admin_id, now))
-        return True, new_bal
+def db_log_action(user_id, action, details):
+    conn = get_connection()
+    cursor = conn.cursor()
+    now = datetime.datetime.now().isoformat()
+    cursor.execute("INSERT INTO logs (user_id, action, details, created_at) VALUES (?, ?, ?, ?)", (user_id, action, details, now))
+    conn.commit()
+    conn.close()
 
-def log_action(actor_id: int, action: str, target_id: int, details: str):
-    with get_db() as conn:
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        conn.execute("""
-            INSERT INTO admin_logs (actor_id, action, target_id, details, date)
-            VALUES (?, ?, ?, ?, ?)
-        """, (actor_id, action, target_id, details, now))
+def db_get_setting(key, default=""):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row["value"] if row else default
 
-def get_setting(key: str):
-    with get_db() as conn:
-        res = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-        return res["value"] if res else "OFF"
-
-def set_setting(key: str, value: str):
-    with get_db() as conn:
-        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-        
+def db_set_setting(key, value):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+    conn.commit()
+    conn.close()
+    
