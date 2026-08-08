@@ -2,13 +2,20 @@ import os
 import asyncio
 import logging
 import datetime
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest
 
 from database import (
     get_connection, db_get_user, db_upsert_user, db_log_action, db_get_setting, db_set_setting
@@ -449,8 +456,8 @@ async def cb_catalog(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Android", callback_data="category_android"),
          InlineKeyboardButton(text="🍎 iOS / iPhone", callback_data="category_ios")],
-        [InlineKeyboardButton(text="💻 Windows / PC", callback_data="category_pc")],
-        [InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
+                [InlineKeyboardButton(text="💻 Windows / PC", callback_data="category_pc"),
+         InlineKeyboardButton(text="🏠 Inicio", callback_data="menu_main")]
     ])
     try:
         await callback.message.edit_text("🛍️ **CATÁLOGO DE PRODUCTOS**\n\nSelecciona una categoría:", parse_mode="Markdown", reply_markup=kb)
