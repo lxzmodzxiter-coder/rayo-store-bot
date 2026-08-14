@@ -6,6 +6,7 @@
 
 import logging
 import datetime
+import sqlite3
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -73,7 +74,7 @@ class Security:
 # ==========================================
 class UserManager:
     @staticmethod
-    def get_or_create_user(user_id: int, username: str, full_name: str, referred_by = None) -> sqlite3.Row if 'sqlite3' in globals() else object:
+    def get_or_create_user(user_id: int, username: str, full_name: str, referred_by = None) -> sqlite3.Row:
         with Database.get_connection() as conn:
             cursor = conn.cursor()
             user = cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
