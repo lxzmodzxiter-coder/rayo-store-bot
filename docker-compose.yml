@@ -1,1 +1,32 @@
+version: '3.8'
 
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: lxz_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-lxz_store}
+    ports:
+      - "5432:5432"
+    restart: always
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: lxz_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  bot:
+    build: .
+    container_name: lxz_bot
+    command: python main.py
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    restart: always
+    
