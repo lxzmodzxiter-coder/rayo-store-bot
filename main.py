@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 
 # Importamos nuestros propios archivos
 from config import settings
-from database import DatabaseMiddleware
+from database import DatabaseMiddleware, engine, Base
 from auth import AuthMiddleware
 import start
 
@@ -22,6 +22,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main() -> None:
+    # 0. Creamos las tablas en PostgreSQL automáticamente si no existen
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("📦 Tablas de la base de datos verificadas/creadas con éxito.")
+
     # 1. Conexión a Redis
     redis_client = Redis.from_url(settings.REDIS_URL)
     storage = RedisStorage(redis=redis_client)
@@ -55,4 +60,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot detenido manualmente.")
-      
+    
