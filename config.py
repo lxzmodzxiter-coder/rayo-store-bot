@@ -28,13 +28,7 @@ class Settings(BaseSettings):
 
 def load_config() -> Settings:
     try:
-        config = Settings()
-        
-        # Truco para Railway: Si la URL empieza normal, le agregamos el asyncpg
-        if config.DATABASE_URL.startswith("postgresql://"):
-            config.DATABASE_URL = config.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-            
-        return config
+        return Settings()
     except Exception as e:
         raise RuntimeError(f"Error crítico en la configuración de entorno. Detalles: {e}")
 
