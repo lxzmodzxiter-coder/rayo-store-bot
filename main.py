@@ -7,10 +7,11 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
-# Importamos nuestros propios archivos
+# Importamos nuestros propios archivos y modelos
 from config import settings
 from database import DatabaseMiddleware, engine, Base
 from auth import AuthMiddleware
+import user  # <--- Importa user.py para que SQLAlchemy reconozca la tabla de usuarios
 import start
 
 # Configuración para ver errores y mensajes en la consola de Railway
@@ -60,4 +61,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Bot detenido manualmente.")
-    
+        
