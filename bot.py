@@ -14,8 +14,13 @@ from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNetworkError,
+)
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -69,6 +74,7 @@ class Settings(BaseSettings):
     REFERRAL_BONUS: float = 0.0
     PAGE_SIZE: int = 6
     BROADCAST_DELAY: float = 0.05
+    APP_VERSION: str = "catalog-fix-2026-08-22"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -393,6 +399,7 @@ CATEGORIES = ["Android", "iOS", "PC", "Otros"]
 CATEGORY_LABELS = {"Android": "🤖 Android", "iOS": "🍎 iOS", "PC": "💻 PC", "Otros": "🌐 Otros"}
 IMAGE_BY_PRODUCT = {
     "DRIP CLIENT": "assets/drip_client_android.jpg",
+    "PRÓXY ANDROID": "assets/drip_client_free_fire.jpg",
     "HG CHEATS": "assets/hg_cheats.jpg",
     "PROXY MENÚ": "assets/proxy_menu_hg_cheats.jpg",
     "PROYECTO HOLOGRAMA VIP": "assets/proyecto_holograma_vip.jpg",
@@ -1459,7 +1466,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 async def main() -> None:
-    # 0. Creamos las tablas en PostgreSQL automáticamente si no existen
+    # Creamos las tablas SQLite automáticamente si no existen.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("📦 Tablas de la base de datos verificadas/creadas con éxito.")
@@ -1472,7 +1479,8 @@ async def main() -> None:
     # 2. Inicializamos el Bot de Telegram
     bot = Bot(
         token=settings.BOT_TOKEN,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        session=AiohttpSession(timeout=120),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher(storage=storage)
 
@@ -1483,11 +1491,17 @@ async def main() -> None:
     # 4. Registramos los comandos (nuestro archivo start.py)
     dp.include_router(router)
 
-    logger.info("⚡ LXZ STORE BEST iniciado correctamente en modo producción.")
+    logger.info("⚡ LXZ STORE BEST iniciado correctamente en modo producción. version=%s", settings.APP_VERSION)
     
     try:
-        # 5. Ponemos al bot a escuchar a los usuarios
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        # 5. Ponemos al bot a escuchar; Railway puede tener cortes transitorios.
+        while True:
+            try:
+                await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+                break
+            except (TelegramNetworkError, asyncio.TimeoutError) as exc:
+                logger.warning("Conexión temporal con Telegram perdida: %s. Reintentando en 10 segundos.", exc)
+                await asyncio.sleep(10)
     finally:
         # Apagado seguro si se reinicia el servidor
         await bot.session.close()
