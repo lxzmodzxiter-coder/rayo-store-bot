@@ -18,7 +18,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -27,7 +27,6 @@ from aiogram.types import (
     TelegramObject,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from redis.asyncio import Redis
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -52,8 +51,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 class Settings(BaseSettings):
     BOT_TOKEN: str
     OWNER_ID: int
-    DATABASE_URL: str
-    REDIS_URL: str
+    DATABASE_URL: str = "sqlite+aiosqlite:///./lxz_store.db"
     STORE_NAME: str = "LXZ STORE BEST"
     CURRENCY: str = "USD"
     TIMEZONE: str = "America/Lima"
@@ -264,13 +262,10 @@ __all__ = [
 
 
 # Motor y sesiones
-engine_kwargs = {"echo": False, "pool_pre_ping": True}
-if settings.DATABASE_URL.startswith("sqlite"):
-    engine_kwargs.pop("pool_pre_ping", None)
-else:
-    engine_kwargs.update(pool_size=20, max_overflow=10)
-
-engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
+engine = create_async_engine(
+    settings.DATABASE_URL or "sqlite+aiosqlite:///./lxz_store.db",
+    echo=False,
+)
 async_session_maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
 
 
@@ -1263,9 +1258,8 @@ async def main() -> None:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("📦 Tablas de la base de datos verificadas/creadas con éxito.")
 
-    # 1. Conexión a Redis
-    redis_client = Redis.from_url(settings.REDIS_URL)
-    storage = RedisStorage(redis=redis_client)
+    # FSM en memoria: no requiere Redis y reduce el consumo del plan gratuito.
+    storage = MemoryStorage()
 
     # 2. Inicializamos el Bot de Telegram
     bot = Bot(
@@ -1289,7 +1283,6 @@ async def main() -> None:
     finally:
         # Apagado seguro si se reinicia el servidor
         await bot.session.close()
-        await redis_client.aclose()
         await engine.dispose()
 
 if __name__ == "__main__":
