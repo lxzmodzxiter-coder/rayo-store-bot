@@ -300,7 +300,7 @@ def nav(home: bool = True, back: str = "menu:home") -> InlineKeyboardMarkup:
 
 
 def categories(categories: list[str]) -> InlineKeyboardMarkup:
-    rows = [[(f"{name}", f"cat:{name}", None)] for name in categories]
+    rows = [[(CATEGORY_LABELS.get(name, name), f"cat:{name}", None)] for name in categories]
     rows.append([("🔎 Buscar producto", "product:search", None)])
     rows.extend([[ ("🏠 Inicio", "menu:home", None) ]])
     return kb(rows)
@@ -385,7 +385,17 @@ class AuthMiddleware(BaseMiddleware):
 router = Router()
 logger = logging.getLogger(__name__)
 PAGE_SIZE = max(1, settings.PAGE_SIZE)
-CATEGORIES = ["🤖 Android", "🍎 iOS / iPhone", "💻 Windows / PC", "🌐 Otros"]
+CATEGORIES = ["Android", "iOS", "PC", "Otros"]
+CATEGORY_LABELS = {"Android": "🤖 Android", "iOS": "🍎 iOS", "PC": "💻 PC", "Otros": "🌐 Otros"}
+INITIAL_PRODUCTS = {
+    "Android": [
+        "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
+        "HG CHEATS", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP",
+    ],
+    "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE"],
+    "PC": ["BYPASS UID", "BR MODS PC", "AIMKILL PC"],
+    "Otros": ["NUMEROS VIRTUALES (Para WhatsApp)", "PLATAFORMA STREAMING"],
+}
 
 
 class ProductSearch(StatesGroup):
@@ -526,12 +536,27 @@ async def notify_staff(bot: Bot, text: str, markup=None) -> None:
 
 
 async def show_home(target: Message | CallbackQuery, user: User) -> None:
-    text = f"⚡ <b>{settings.STORE_NAME}</b>\n\nTienda digital rápida, segura y profesional.\n\nSelecciona una opción para continuar:"
+    text = (f"⚡ <b>{settings.STORE_NAME}</b>\n\nBienvenido, {name_of(user)}.\n\n"
+            "Comandos disponibles:\n"
+            "/agregas — agregar un producto o APK (Admin)\n"
+            "/stock — ver inventario\n"
+            "/actualizarstock — actualizar stock (Admin)\n"
+            "/broadcast — enviar difusión (Admin)\n\n"
+            "También puedes usar los botones de la tienda:")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     if isinstance(target, CallbackQuery):
         await edit_or_answer(target, text, markup)
     else:
         await target.answer(text, reply_markup=markup)
+
+
+async def seed_initial_products(session: AsyncSession) -> None:
+    for category, names in INITIAL_PRODUCTS.items():
+        for name in names:
+            existing = (await session.execute(select(Product).where(Product.category == category, Product.name == name))).scalar_one_or_none()
+            if not existing:
+                session.add(Product(category=category, name=name, description="Producto agregado; configura precio, stock y entrega desde /agregas.", price=Decimal("0.00"), stock=0, is_active=False))
+    await session.commit()
 
 
 @router.message(CommandStart())
@@ -543,10 +568,71 @@ async def cmd_start(message: Message, session: AsyncSession, current_user: User 
     await show_home(message, user)
 
 
-@router.message(Command("cancelar"))
-async def cmd_cancel(message: Message, state: FSMContext):
+@router.message(Command("agregas"))
+async def cmd_agregas(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    actor = await event_user(message, session, current_user)
+    if not is_admin(actor):
+        await message.answer("❌ Permisos insuficientes.")
+        return
     await state.clear()
-    await message.answer("❌ Operación cancelada.")
+    await state.set_state(ProductFlow.name)
+    await message.answer("➕ <b>NUEVO PRODUCTO</b>\n\nEscribe el nombre del producto o APK:")
+
+
+@router.message(Command("stock"))
+async def cmd_stock(message: Message, session: AsyncSession, current_user: User | None = None):
+    user = await event_user(message, session, current_user)
+    products = (await session.execute(select(Product).order_by(Product.category, Product.name))).scalars().all()
+    visible = products if is_admin(user) else [p for p in products if p.is_active]
+    lines = ["📦 <b>INVENTARIO</b>", ""]
+    for category in CATEGORIES:
+        group = [p for p in visible if p.category == category]
+        if group:
+            lines.append(CATEGORY_LABELS.get(category, category))
+            lines.extend(f"• {p.name} — stock: {p.stock} — {'activo' if p.is_active else 'pendiente'}" for p in group)
+            lines.append("")
+    await message.answer("\n".join(lines) if len(lines) > 2 else "📦 No hay productos activos en el inventario.")
+
+
+@router.message(Command("actualizarstock"))
+async def cmd_update_stock(message: Message, session: AsyncSession, current_user: User | None = None):
+    actor = await event_user(message, session, current_user)
+    if not is_admin(actor):
+        await message.answer("❌ Permisos insuficientes.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer("Uso: /actualizarstock Nombre del producto Cantidad\nEjemplo: /actualizarstock DRIP CLIENT 10")
+        return
+    try:
+        quantity = int(parts[-1])
+    except ValueError:
+        await message.answer("❌ La cantidad debe ser un número entero.")
+        return
+    if quantity < 0:
+        await message.answer("❌ El stock no puede ser negativo.")
+        return
+    product_name = " ".join(parts[1:-1]).strip()
+    product = (await session.execute(select(Product).where(Product.name.ilike(product_name)).with_for_update())).scalar_one_or_none()
+    if not product:
+        await message.answer("❌ Producto no encontrado. Usa /stock para consultar los nombres exactos.")
+        return
+    product.stock = quantity
+    if product.price > 0:
+        product.is_active = True
+    await log_event(session, actor.telegram_id, "stock_update", str(product.id), str(quantity))
+    await session.commit()
+    await message.answer(f"✅ Stock actualizado.\n\n📦 {product.name}\n📊 Nuevo stock: {product.stock}\n🟢 Estado: {'activo' if product.is_active else 'pendiente de precio'}")
+
+
+@router.message(Command("broadcast"))
+async def cmd_broadcast(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    actor = await event_user(message, session, current_user)
+    if not is_admin(actor):
+        await message.answer("❌ Permisos insuficientes.")
+        return
+    await state.set_state(BroadcastFlow.message)
+    await message.answer("📢 Envía ahora el mensaje, foto, vídeo, documento o sticker que deseas difundir. Usa /start para cancelar.")
 
 
 @router.callback_query(F.data == "menu:home")
@@ -757,7 +843,7 @@ async def topup_method(callback: CallbackQuery, state: FSMContext):
     await state.set_state(TopupFlow.amount)
     await state.update_data(method=method)
     details = (f"Yape: <code>{settings.YAPE_NUMBER or 'no configurado'}</code>\nPlin: <code>{settings.PLIN_NUMBER or 'no configurado'}</code>" if method == "yape" else f"Red: <b>{settings.BINANCE_USDT_NETWORK}</b>\nDirección: <code>{settings.BINANCE_USDT_ADDRESS}</code>")
-    await edit_or_answer(callback, f"💳 <b>RECARGA · {method.upper()}</b>\n\n{details}\n\nEscribe el monto a recargar. Usa /cancelar para salir.")
+    await edit_or_answer(callback, f"💳 <b>RECARGA · {method.upper()}</b>\n\n{details}\n\nEscribe el monto a recargar. Usa /start para salir.")
 
 
 @router.message(TopupFlow.amount, F.text)
@@ -828,7 +914,7 @@ async def menu_coupons(callback: CallbackQuery, session: AsyncSession, state: FS
         lines.append(f"🎟️ <code>{c.code}</code> · {value} · Usos: {c.used_count}/{c.usage_limit or '∞'} · {expires}")
     if not coupons: lines.append("No hay cupones activos en este momento.")
     await state.set_state(CouponFlow.code)
-    await edit_or_answer(callback, "\n".join(lines) + "\n\nEscribe un código para aplicarlo a tu próxima compra, o /cancelar.")
+    await edit_or_answer(callback, "\n".join(lines) + "\n\nEscribe un código para aplicarlo a tu próxima compra, o /start.")
 
 
 @router.message(CouponFlow.code, F.text)
@@ -907,7 +993,7 @@ async def admin_stats(callback: CallbackQuery, session: AsyncSession, current_us
 async def admin_users(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     if not await check_admin(callback, session, current_user): return
     await state.set_state(UserSearch.waiting)
-    await edit_or_answer(callback, "👥 <b>USUARIOS</b>\n\nEscribe ID, username o nombre para buscar. /cancelar para salir.")
+    await edit_or_answer(callback, "👥 <b>USUARIOS</b>\n\nEscribe ID, username o nombre para buscar. /start para salir.")
 
 
 @router.message(UserSearch.waiting, F.text)
@@ -1129,7 +1215,7 @@ async def admin_coupons(callback: CallbackQuery, state: FSMContext, session: Asy
     if not await check_admin(callback, session, current_user): return
     coupons = (await session.execute(select(Coupon).order_by(Coupon.id.desc()).limit(15))).scalars().all()
     await state.set_state(CouponAdminFlow.code)
-    await edit_or_answer(callback, "🎟️ <b>CUPONES</b>\n\n" + ("\n".join(f"{c.code} · {'activo' if c.is_active else 'inactivo'} · {c.used_count}/{c.usage_limit or '∞'}" for c in coupons) if coupons else "No hay cupones.") + "\n\nEscribe un código nuevo para crearlo, o /cancelar.")
+    await edit_or_answer(callback, "🎟️ <b>CUPONES</b>\n\n" + ("\n".join(f"{c.code} · {'activo' if c.is_active else 'inactivo'} · {c.used_count}/{c.usage_limit or '∞'}" for c in coupons) if coupons else "No hay cupones.") + "\n\nEscribe un código nuevo para crearlo, o /start.")
 
 
 @router.message(CouponAdminFlow.code, F.text)
@@ -1158,7 +1244,7 @@ async def admin_coupon_expiry(message: Message, state: FSMContext, session: Asyn
 @router.callback_query(F.data == "admin:broadcast")
 async def admin_broadcast(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     if not await check_admin(callback, session, current_user): return
-    await state.set_state(BroadcastFlow.message); await edit_or_answer(callback, "📢 <b>DIFUSIÓN</b>\n\nEnvía el texto, foto, vídeo, documento o sticker que deseas copiar a usuarios no baneados. Usa /cancelar para salir.")
+    await state.set_state(BroadcastFlow.message); await edit_or_answer(callback, "📢 <b>DIFUSIÓN</b>\n\nEnvía el texto, foto, vídeo, documento o sticker que deseas copiar a usuarios no baneados. Usa /start para salir.")
 
 
 @router.message(BroadcastFlow.message)
@@ -1190,7 +1276,7 @@ async def owner_admins(callback: CallbackQuery, state: FSMContext, session: Asyn
     if not actor or not is_owner(actor): return
     admins = (await session.execute(select(User).where(User.role.in_([UserRole.ADMIN, UserRole.OWNER])))).scalars().all()
     await state.set_state(AdminIdFlow.waiting)
-    await edit_or_answer(callback, "⚙️ <b>ADMINISTRADORES</b>\n\n" + ("\n".join(f"• {name_of(a)} · {a.telegram_id} · {a.role.value}" for a in admins)) + "\n\nEscribe el ID de Telegram para alternar Admin, o /cancelar.")
+    await edit_or_answer(callback, "⚙️ <b>ADMINISTRADORES</b>\n\n" + ("\n".join(f"• {name_of(a)} · {a.telegram_id} · {a.role.value}" for a in admins)) + "\n\nEscribe el ID de Telegram para alternar Admin, o /start.")
 
 
 @router.message(AdminIdFlow.waiting, F.text)
@@ -1226,7 +1312,7 @@ async def admin_secondary(callback: CallbackQuery, session: AsyncSession, curren
 
 @router.callback_query(F.data == "product:search")
 async def product_search_start(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(ProductSearch.waiting); await edit_or_answer(callback, "🔎 Escribe el nombre del producto que buscas. /cancelar para salir.")
+    await state.set_state(ProductSearch.waiting); await edit_or_answer(callback, "🔎 Escribe el nombre del producto que buscas. /start para salir.")
 
 
 @router.message(ProductSearch.waiting, F.text)
@@ -1257,6 +1343,8 @@ async def main() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("📦 Tablas de la base de datos verificadas/creadas con éxito.")
+    async with async_session_maker() as seed_session:
+        await seed_initial_products(seed_session)
 
     # FSM en memoria: no requiere Redis y reduce el consumo del plan gratuito.
     storage = MemoryStorage()
