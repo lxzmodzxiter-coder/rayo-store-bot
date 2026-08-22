@@ -375,10 +375,32 @@ def payment_methods() -> InlineKeyboardMarkup:
     return kb(rows)
 
 
-def topup_amounts() -> InlineKeyboardMarkup:
+def peru_currency_methods() -> InlineKeyboardMarkup:
+    return kb([
+        [("🇵🇪 Soles (PEN)", "topup:currency:pen", None)],
+        [("📍 Elegir otro país", "menu:balance", None)],
+        [("❌ Cancelar", "menu:home", None)],
+    ])
+
+
+def peru_payment_methods() -> InlineKeyboardMarkup:
+    return kb([
+        [("📱 Yape", "topup:peru_method:yape", None), ("📱 Plin", "topup:peru_method:plin", None)],
+        [("💳 Ligo", "topup:peru_method:ligo", None)],
+        [("🏦 Transferencia bancaria · CCI", "topup:peru_method:bank", None)],
+        [("📍 Elegir otra moneda", "topup:country:pe", None)],
+        [("❌ Cancelar", "menu:home", None)],
+    ])
+
+
+def topup_amounts(currency: str = "USD", rate: Decimal = Decimal(1)) -> InlineKeyboardMarkup:
     rows = []
     for index in range(0, len(TOPUP_AMOUNTS), 3):
-        rows.append([(f"💵 {amount} USD", f"topup:amount:{amount}", None) for amount in TOPUP_AMOUNTS[index:index + 3]])
+        row = []
+        for usd_amount in TOPUP_AMOUNTS[index:index + 3]:
+            source_amount = money(Decimal(usd_amount) * rate)
+            row.append((f"💵 {source_amount} {currency}", f"topup:amount:{source_amount}:{currency}:{usd_amount}", None))
+        rows.append(row)
     rows.append([("✍️ Monto personalizado", "topup:custom", None)])
     rows.append([("📍 Elegir otro país", "menu:balance", None)])
     rows.append([("❌ Cancelar", "menu:home", None)])
@@ -481,6 +503,14 @@ TOPUP_METHOD_LABELS = {
     "binance": "Binance",
     "mercado_pago": "Mercado Pago",
     "yape_plin": "Yape / Plin",
+}
+PERU_PAYMENT_CONFIG = {
+    "phone": "927816593",
+    "cci": "92100129860882862046",
+    "holder": "Serafin Armando Corahua Fernandez",
+    "rate": Decimal("3.40"),
+    "minimum": Decimal("3.40"),
+    "maximum": Decimal("30000.00"),
 }
 
 
@@ -1171,8 +1201,38 @@ async def topup_country(callback: CallbackQuery, state: FSMContext):
     if not country:
         await callback.answer("País no disponible.", show_alert=True)
         return
-    await state.update_data(country=code, country_name=country)
-    await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el método de pago para continuar:", payment_methods())
+    await state.update_data(country=code, country_name=country, currency="USD", rate="1.00")
+    if code == "pe":
+        await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona la moneda que recibirás:", peru_currency_methods())
+    else:
+        await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el método de pago para continuar:", payment_methods())
+
+
+@router.callback_query(F.data == "topup:currency:pen")
+async def topup_currency_pen(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if data.get("country") != "pe":
+        await callback.answer("Primero selecciona Perú.", show_alert=True)
+        return
+    await state.update_data(currency="PEN", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum=str(PERU_PAYMENT_CONFIG["minimum"]), maximum=str(PERU_PAYMENT_CONFIG["maximum"]))
+    await edit_or_answer(callback, "🇵🇪 <b>SOLES (PEN)</b>\n\nSelecciona cómo realizarás la transferencia:", peru_payment_methods())
+
+
+@router.callback_query(F.data.startswith("topup:peru_method:"))
+async def topup_peru_method(callback: CallbackQuery, state: FSMContext):
+    method = callback.data.rsplit(":", 1)[1]
+    method_labels = {"yape": "Yape", "plin": "Plin", "ligo": "Ligo", "bank": "Transferencia bancaria · CCI"}
+    if method not in method_labels:
+        await callback.answer("Método no disponible.", show_alert=True)
+        return
+    await state.set_state(TopupFlow.amount)
+    await state.update_data(method=method_labels[method], currency="PEN", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum=str(PERU_PAYMENT_CONFIG["minimum"]), maximum=str(PERU_PAYMENT_CONFIG["maximum"]))
+    if method in {"yape", "plin", "ligo"}:
+        details = f"📱 Número de celular: <code>{PERU_PAYMENT_CONFIG['phone']}</code>\n🏦 Banco destino: <b>LIGO</b>"
+    else:
+        details = f"👤 Titular: <b>{PERU_PAYMENT_CONFIG['holder']}</b>\n🏦 CCI: <code>{PERU_PAYMENT_CONFIG['cci']}</code>"
+    instructions = "Pega el número de celular de Yape, Plin, etc. y selecciona LIGO como banco destino." if method != "bank" else "Usa el número de CCI en bancos y/o cajas."
+    await edit_or_answer(callback, f"💳 <b>{method_labels[method]}</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📥 Mínimo: {PERU_PAYMENT_CONFIG['minimum']:.2f} PEN · Máximo: {PERU_PAYMENT_CONFIG['maximum']:,.2f} PEN\n\nSelecciona el monto a enviar:", topup_amounts("PEN", PERU_PAYMENT_CONFIG["rate"]))
 
 
 @router.callback_query(F.data.startswith("topup:method:"))
@@ -1198,30 +1258,52 @@ async def topup_method(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("topup:amount:"))
 async def topup_amount_choice(callback: CallbackQuery, state: FSMContext):
-    raw_amount = callback.data.rsplit(":", 1)[1]
-    amount = money(raw_amount)
-    if amount <= 0:
+    parts = callback.data.split(":")
+    if len(parts) != 5:
         await callback.answer("Monto inválido.", show_alert=True)
         return
-    await state.update_data(amount=str(amount))
+    source_amount = money(parts[2])
+    currency = parts[3]
+    usd_amount = money(parts[4])
+    if source_amount <= 0 or usd_amount <= 0:
+        await callback.answer("Monto inválido.", show_alert=True)
+        return
+    await state.update_data(amount=str(usd_amount), source_amount=str(source_amount), currency=currency)
     await state.set_state(TopupFlow.proof)
-    await edit_or_answer(callback, f"💵 <b>Monto seleccionado: {m(amount)}</b>\n\nAhora envía la fotografía o documento del comprobante. Usa /start para cancelar.")
+    conversion = f"{source_amount} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
+    await edit_or_answer(callback, f"💵 <b>Monto seleccionado: {conversion}</b>\n\nAhora envía la fotografía o documento del comprobante. Usa /start para cancelar.")
 
 
 @router.callback_query(F.data == "topup:custom")
 async def topup_custom(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    currency = data.get("currency", "USD")
     await state.set_state(TopupFlow.amount)
-    await edit_or_answer(callback, "✍️ <b>MONTO PERSONALIZADO</b>\n\nEscribe la cantidad en USD. Ejemplo: 12.50")
+    await edit_or_answer(callback, f"✍️ <b>MONTO PERSONALIZADO</b>\n\nEscribe la cantidad en {currency}. Ejemplo: {'42.50' if currency == 'PEN' else '12.50'}")
 
 
 @router.message(TopupFlow.amount, F.text)
 async def topup_amount(message: Message, state: FSMContext):
-    amount = money(message.text)
-    if amount <= 0:
-        await message.answer("❌ Escribe un monto mayor que cero."); return
-    await state.update_data(amount=str(amount))
+    data = await state.get_data()
+    source_amount = money(message.text)
+    currency = data.get("currency", "USD")
+    rate = money(data.get("rate", "1")) or Decimal("1.00")
+    if source_amount <= 0:
+        await message.answer("❌ Escribe un monto mayor que cero.")
+        return
+    minimum = money(data.get("minimum", "0"))
+    maximum = money(data.get("maximum", "0"))
+    if minimum and source_amount < minimum:
+        await message.answer(f"❌ El mínimo es {minimum:,.2f} {currency}.")
+        return
+    if maximum and source_amount > maximum:
+        await message.answer(f"❌ El máximo es {maximum:,.2f} {currency}.")
+        return
+    usd_amount = source_amount if currency == "USD" else money(source_amount / rate)
+    await state.update_data(amount=str(usd_amount), source_amount=str(source_amount), currency=currency)
     await state.set_state(TopupFlow.proof)
-    await message.answer("📸 Ahora envía una fotografía del comprobante. También puedes enviar un documento de imagen.")
+    conversion = f"{source_amount:,.2f} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
+    await message.answer(f"✅ Monto registrado: <b>{conversion}</b>\n\n📸 Ahora envía una fotografía del comprobante. También puedes enviar un documento de imagen.")
 
 
 @router.message(TopupFlow.proof, F.photo)
@@ -1239,13 +1321,17 @@ async def create_topup(message: Message, state: FSMContext, session: AsyncSessio
     data = await state.get_data()
     country_name = data.get("country_name", "País no indicado")
     method = data.get("method", "Método no indicado")
-    request = TopupRequest(user_id=user.id, method=f"{country_name} · {method}", amount=money(data["amount"]), proof_file_id=file_id, proof_type=proof_type)
+    currency = data.get("currency", "USD")
+    usd_amount = money(data["amount"])
+    source_amount = money(data.get("source_amount", data["amount"]))
+    amount_text = f"{source_amount:,.2f} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
+    request = TopupRequest(user_id=user.id, method=f"{country_name} · {method}", amount=usd_amount, proof_file_id=file_id, proof_type=proof_type)
     session.add(request); await session.commit(); await session.refresh(request)
     await log_event(session, user.telegram_id, "topup_request", str(request.id), "pending"); await session.commit()
     await state.clear()
-    await message.answer(f"🟡 <b>RECARGA PENDIENTE</b>\n\nMonto: {m(request.amount)}\nMétodo: {request.method}\nSolicitud: <code>#{request.id}</code>\n\nUn administrador revisará tu comprobante.", reply_markup=nav())
+    await message.answer(f"🟡 <b>RECARGA PENDIENTE</b>\n\nMonto recibido: {amount_text}\nMétodo: {request.method}\nSolicitud: <code>#{request.id}</code>\n\nUn administrador revisará tu comprobante.", reply_markup=nav())
     markup = kb([[ ("✅ Aprobar", f"topup:approve:{request.id}", None), ("❌ Rechazar", f"topup:reject:{request.id}", None) ]])
-    caption = f"🧾 <b>SOLICITUD DE RECARGA #{request.id}</b>\n👤 Usuario: {name_of(user)}\n🆔 ID: <code>{user.telegram_id}</code>\n💵 Monto: {m(request.amount)}\n💳 Método: {request.method}\n📅 Fecha: {now_text()}\n📌 Estado: Pendiente"
+    caption = f"🧾 <b>SOLICITUD DE RECARGA #{request.id}</b>\n👤 Usuario: {name_of(user)}\n🆔 ID: <code>{user.telegram_id}</code>\n💵 Monto: {amount_text}\n💳 Método: {request.method}\n📅 Fecha: {now_text()}\n📌 Estado: Pendiente"
     for admin_id in settings.admin_ids:
         try:
             if proof_type == "photo": await bot.send_photo(admin_id, file_id, caption=caption, reply_markup=markup)
