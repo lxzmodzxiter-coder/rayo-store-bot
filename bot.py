@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     REFERRAL_BONUS: float = 0.0
     PAGE_SIZE: int = 6
     BROADCAST_DELAY: float = 0.05
-    APP_VERSION: str = "saldo-usd-2026-08-22"
+    APP_VERSION: str = "full-store-refresh-2026-08-22"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -300,8 +300,7 @@ def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
     rows = [
         [("🛍️ VER CATALOGO SOCIOS", "menu:catalog", None)],
         [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
-        [("👤 Mi Perfil / Historial", "menu:profile", None)],
-        [("💎 Adquirir Premium ( 10% OFF 💰)", "menu:premium", None)],
+        [("👤 Mi Perfil / Historial", "menu:profile", None), ("💎 Premium (10% OFF)", "menu:premium", None)],
         [("📞 Soporte Directo", "menu:support", None)],
     ]
     if channel_url:
@@ -357,13 +356,31 @@ def confirm(action: str, cancel: str = "menu:home") -> InlineKeyboardMarkup:
     return kb([[ ("✅ Confirmar", action, None), ("❌ Cancelar", cancel, None) ]])
 
 
-def payment_methods(yape_enabled: bool = True, binance_enabled: bool = True) -> InlineKeyboardMarkup:
+def topup_countries() -> InlineKeyboardMarkup:
     rows = []
-    if yape_enabled:
-        rows.append([("🇵🇪 Yape / Plin", "topup:method:yape", None)])
-    if binance_enabled:
-        rows.append([("💰 Binance USDT", "topup:method:binance", None)])
-    rows.append([("⬅️ Atrás", "menu:home", None)])
+    for index in range(0, len(TOPUP_COUNTRIES), 2):
+        row = [(label, f"topup:country:{code}", None) for code, label in TOPUP_COUNTRIES[index:index + 2]]
+        rows.append(row)
+    rows.append([("👤 Contactar para Recarga", "topup:assisted", None)])
+    rows.append([("❌ Cancelar", "menu:home", None)])
+    return kb(rows)
+
+
+def payment_methods() -> InlineKeyboardMarkup:
+    rows = [[(f"💳 {label}", f"topup:method:{method}", None)] for method, label in TOPUP_METHOD_LABELS.items()]
+    rows.append([("👤 Recarga asistida", "topup:assisted", None)])
+    rows.append([("📍 Elegir otro país", "menu:balance", None)])
+    rows.append([("❌ Cancelar", "menu:home", None)])
+    return kb(rows)
+
+
+def topup_amounts() -> InlineKeyboardMarkup:
+    rows = []
+    for index in range(0, len(TOPUP_AMOUNTS), 3):
+        rows.append([(f"💵 {amount} USD", f"topup:amount:{amount}", None) for amount in TOPUP_AMOUNTS[index:index + 3]])
+    rows.append([("✍️ Monto personalizado", "topup:custom", None)])
+    rows.append([("📍 Elegir otro país", "menu:balance", None)])
+    rows.append([("❌ Cancelar", "menu:home", None)])
     return kb(rows)
 
 
@@ -436,6 +453,23 @@ def image_for_product(name: str) -> str | None:
     return IMAGE_BY_PRODUCT.get(name.strip().upper())
 
 
+TOPUP_COUNTRIES = [
+    ("mx", "🇲🇽 México"), ("ar", "🇦🇷 Argentina"), ("bo", "🇧🇴 Bolivia"),
+    ("br", "🇧🇷 Brasil"), ("cl", "🇨🇱 Chile"), ("co", "🇨🇴 Colombia"),
+    ("cr", "🇨🇷 Costa Rica"), ("ec", "🇪🇨 Ecuador"), ("es", "🇪🇸 España"),
+    ("us", "🇺🇸 EE.UU"), ("gt", "🇬🇹 Guatemala"), ("hn", "🇭🇳 Honduras"),
+    ("ni", "🇳🇮 Nicaragua"), ("pa", "🇵🇦 Panamá"), ("py", "🇵🇾 Paraguay"),
+    ("pe", "🇵🇪 Perú"), ("do", "🇩🇴 RD"), ("ve", "🇻🇪 Venezuela"),
+]
+TOPUP_AMOUNTS = (5, 10, 15, 20, 30, 50, 100)
+TOPUP_METHOD_LABELS = {
+    "paypal": "PayPal",
+    "binance": "Binance",
+    "mercado_pago": "Mercado Pago",
+    "yape_plin": "Yape / Plin",
+}
+
+
 INITIAL_PRODUCTS = {
     "Android": [
         "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
@@ -505,6 +539,31 @@ def money(value: object) -> Decimal:
 
 def m(value: object) -> str:
     return f"{money(value):,.2f} {settings.CURRENCY}"
+def parse_variants(description: str | None) -> list[tuple[str, Decimal]]:
+    variants = []
+    if not description or "|" not in description:
+        return variants
+    for part in description.split(","):
+        if "|" not in part:
+            continue
+        name, raw_price = part.split("|", 1)
+        price = money(raw_price.strip().replace("$", ""))
+        name = name.strip()
+        if name and price > 0:
+            variants.append((name, price))
+    return variants
+
+
+def selected_price(product: Product, variant: str) -> Decimal | None:
+    if variant == "default":
+        price = money(product.price)
+        return price if price > 0 else None
+    for name, price in parse_variants(product.description):
+        if name == variant:
+            return price
+    return None
+
+
 def purchase_duration(purchase: Purchase) -> str:
     product_name = (purchase.product_name or "").strip()
     if product_name.endswith(")") and "(" in product_name:
@@ -593,22 +652,37 @@ async def notify_staff(bot: Bot, text: str, markup=None) -> None:
     for admin_id in settings.admin_ids:
         try:
             await bot.send_message(admin_id, text, reply_markup=markup)
-        except (TelegramForbiddenError, TelegramBadRequest):
-            continue
-
-
+        except Exception:
+            logger.exception("No se pudo notificar al administrador %s.", admin_id)
 async def show_home(target: Message | CallbackQuery, user: User) -> None:
+    admin_commands = ("\n\n🔐 <b>COMANDOS ADMIN</b>\n"
+                      "<code>/agregas</code> · <code>/stock</code> · <code>/actualizarstock</code>\n"
+                      "<code>/broadcast</code> · <code>/saldo ID CANTIDAD USD</code>\n"
+                      "<code>/key ID KEY</code>" if is_admin(user) else "")
     text = (f"💬 <b>RESELLERS STORE EXCLUSIVE</b> 🛍️\n\n"
             f"👤 <b>Cliente:</b> {name_of(user)}\n"
             f"🆔 <b>ID de Cuenta:</b> <code>{user.telegram_id}</code>\n"
             f"💰 <b>Saldo Disponible:</b> {m(user.balance)}\n\n"
-            f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>"
-            f"{chr(10) + chr(10) + '🔐 <b>Entrega de Keys:</b> <code>/key ID KEY</code>' if is_admin(user) else ''}")
+            f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>{admin_commands}")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
-    if isinstance(target, CallbackQuery):
-        await edit_or_answer(target, text, markup)
+    try:
+        if isinstance(target, CallbackQuery):
+            await target.message.delete()
+    except TelegramBadRequest:
+        pass
+
+    home_image = "assets/plataforma_streaming.jpg"  # Default fallback cover
+    if Path(home_image).is_file():
+        if isinstance(target, CallbackQuery):
+            await target.message.answer_photo(FSInputFile(home_image), caption=text, reply_markup=markup)
+            await target.answer()
+        else:
+            await target.answer_photo(FSInputFile(home_image), caption=text, reply_markup=markup)
     else:
-        await target.answer(text, reply_markup=markup)
+        if isinstance(target, CallbackQuery):
+            await edit_or_answer(target, text, markup)
+        else:
+            await target.answer(text, reply_markup=markup)
 
 
 LEGACY_CATEGORY_MAP = {
@@ -805,7 +879,17 @@ async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
     db_categories = (await session.execute(select(Product.category).distinct())).scalars().all()
     values = list(dict.fromkeys(CATEGORIES + [x for x in db_categories if x not in CATEGORIES]))
     text = "🛒 <b>CATEGORÍAS DISPONIBLES</b> 🎮\nSelecciona la categoría de tu interés, bb:"
-    await edit_or_answer(callback, text, categories(values))
+    markup = categories(values)
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+    home_image = "assets/plataforma_streaming.jpg"
+    if Path(home_image).is_file():
+        await callback.message.answer_photo(FSInputFile(home_image), caption=text, reply_markup=markup)
+        await callback.answer()
+    else:
+        await edit_or_answer(callback, text, markup)
 
 
 async def render_products(callback: CallbackQuery, session: AsyncSession, category: str, page: int):
@@ -818,7 +902,17 @@ async def render_products(callback: CallbackQuery, session: AsyncSession, catego
         text = f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\nNo hay productos disponibles en esta categoría."
     else:
         text = f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\n📦 <b>PRODUCTOS DISPONIBLES</b> 🔥\nSelecciona lo que te vas a llevar:"
-    await edit_or_answer(callback, text, product_list(items, page, pages, category))
+    markup = product_list(items, page, pages, category)
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+    cat_image = "assets/proyecto_holograma_vip.jpg" if category == "Android" else ("assets/proxy_potatso_ios.jpg" if category == "iOS" else "assets/br_mods_pc.jpg")
+    if Path(cat_image).is_file():
+        await callback.message.answer_photo(FSInputFile(cat_image), caption=text, reply_markup=markup)
+        await callback.answer()
+    else:
+        await edit_or_answer(callback, text, markup)
 
 
 @router.callback_query(F.data.startswith("cat:"))
@@ -839,18 +933,9 @@ async def product_info(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Producto no encontrado.", show_alert=True)
         return
 
-    # Parse variants if stored in delivery_data or use single price
-    variants = []
-    if product.description and "|" in product.description and "$" in product.description:
-        # Simplistic variant parser: "1 Día | 1.00, 7 Días | 4.50"
-        try:
-            for part in product.description.split(","):
-                v_name, v_price = part.split("|")
-                variants.append((v_name.strip(), f"${money(v_price.strip()):.2f}"))
-        except (ValueError, InvalidOperation):
-            variants = []
-
-    can_buy = product.is_active and product.price > 0 and product.stock > 0
+    variant_options = parse_variants(product.description)
+    variants = [(name, m(price)) for name, price in variant_options]
+    can_buy = product.is_active and product.stock > 0 and (bool(variant_options) or product.price > 0)
 
     if variants:
         text = f"📦 <b>{product.name}</b> 📥\n\n⏱️ <b>SELECCIONA LA DURACIÓN DE TU LICENCIA:</b>"
@@ -879,8 +964,14 @@ async def buy_preview(callback: CallbackQuery, session: AsyncSession, current_us
     if not user or not product or product.stock <= 0:
         await callback.answer("Producto agotado o no disponible.", show_alert=True)
         return
+    parts = callback.data.split(":", 2)
+    variant = parts[2] if len(parts) > 2 else "default"
+    price = selected_price(product, variant)
+    if price is None:
+        await callback.answer("Duración o precio no disponible.", show_alert=True)
+        return
     data = await state.get_data() if state else {}
-    total = money(product.price)
+    total = price
     coupon_line = ""
     coupon_code = data.get("coupon_code")
     if coupon_code:
@@ -889,11 +980,12 @@ async def buy_preview(callback: CallbackQuery, session: AsyncSession, current_us
         if discount:
             total -= discount
             coupon_line = f"\n🎟️ Descuento ({coupon_code}): -{m(discount)}"
-    text = f"🛒 <b>CONFIRMAR COMPRA</b>\n\n📦 Producto: {product.name}\n💵 Precio: {m(product.price)}{coupon_line}\n💳 Total: <b>{m(total)}</b>\n📊 Stock: {product.stock}\n💰 Saldo disponible: {m(user.balance)}\n💰 Saldo después: {m(money(user.balance) - total)}"
+    product_label = f"{product.name} ({variant})" if variant != "default" else product.name
+    text = f"🛒 <b>CONFIRMAR COMPRA</b>\n\n📦 Producto: {product_label}\n💵 Precio: {m(price)}{coupon_line}\n💳 Total: <b>{m(total)}</b>\n📊 Stock: {product.stock}\n💰 Saldo disponible: {m(user.balance)}\n💰 Saldo después: {m(money(user.balance) - total)}"
     if money(user.balance) < total:
         await edit_or_answer(callback, text + "\n\n❌ Saldo insuficiente.", confirm("menu:balance", f"product:{product.id}"))
     else:
-        await edit_or_answer(callback, text, confirm(f"buyconfirm:{product.id}", f"product:{product.id}"))
+        await edit_or_answer(callback, text, confirm(f"buyconfirm:{product.id}:{variant}", f"product:{product.id}"))
 
 
 def coupon_discount(coupon: Coupon | None, price: Decimal, user: User) -> Decimal:
@@ -924,15 +1016,10 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
             await callback.message.edit_text("❌ El producto ya no está disponible.", reply_markup=nav())
             return
 
-        price = product.price
-        if variant != "default" and product.description and "|" in product.description:
-            try:
-                for part in product.description.split(","):
-                    if part.split("|")[0].strip() == variant:
-                        price = money(part.split("|")[1].strip())
-                        break
-            except (ValueError, InvalidOperation):
-                pass
+        price = selected_price(product, variant)
+        if price is None:
+            await callback.message.edit_text("❌ La duración seleccionada ya no está disponible.", reply_markup=nav())
+            return
         data = await state.get_data() if state else {}
         coupon_code = data.get("coupon_code")
         coupon = None
@@ -1020,26 +1107,92 @@ async def purchase_detail_view(callback: CallbackQuery, session: AsyncSession, c
     if not purchase:
         await callback.answer("Compra no encontrada.", show_alert=True); return
     delivery = f"\n\n📦 Datos: <code>{purchase.delivery_data}</code>" if purchase.delivery_data else ""
-    await edit_or_answer(callback, f"🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)}\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}", nav("", "menu:purchases"))
+    text = f"🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)}\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
+    markup = nav("", "menu:purchases")
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+    home_image = "assets/plataforma_streaming.jpg"
+    if Path(home_image).is_file():
+        await callback.message.answer_photo(FSInputFile(home_image), caption=text, reply_markup=markup)
+        await callback.answer()
+    else:
+        await edit_or_answer(callback, text, markup)
 
 
 @router.callback_query(F.data == "menu:balance")
 async def menu_balance(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     user = await event_user(callback, session, current_user)
-    if user: await edit_or_answer(callback, f"💳 <b>RECARGAR SALDO</b>\n\nSaldo actual: <b>{m(user.balance)}</b>\n\nSelecciona un método:", payment_methods(bool(settings.YAPE_NUMBER or settings.PLIN_NUMBER), settings.BINANCE_USDT_ENABLED and bool(settings.BINANCE_USDT_ADDRESS)))
+    if user:
+        text = f"💳 <b>RECARGAR SALDO USD</b>\n\nSaldo actual: <b>{m(user.balance)}</b>\n\n📍 <b>SELECCIONA TU MÉTODO O PAÍS PARA RECARGAR:</b>"
+        markup = topup_countries()
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest:
+            pass
+        home_image = "assets/plataforma_streaming.jpg"
+        if Path(home_image).is_file():
+            await callback.message.answer_photo(FSInputFile(home_image), caption=text, reply_markup=markup)
+            await callback.answer()
+        else:
+            await edit_or_answer(callback, text, markup)
+
+
+@router.callback_query(F.data == "topup:assisted")
+async def topup_assisted(callback: CallbackQuery):
+    support = f"@{settings.SUPPORT_USERNAME.lstrip('@')}" if settings.SUPPORT_USERNAME else "el administrador de la tienda"
+    await edit_or_answer(callback, f"👤 <b>RECARGA ASISTIDA</b>\n\nContacta a {support} indicando tu país y el monto en USD.\n\nUn administrador confirmará la recarga después de revisar el pago.", nav())
+
+
+@router.callback_query(F.data.startswith("topup:country:"))
+async def topup_country(callback: CallbackQuery, state: FSMContext):
+    code = callback.data.rsplit(":", 1)[1]
+    country = dict(TOPUP_COUNTRIES).get(code)
+    if not country:
+        await callback.answer("País no disponible.", show_alert=True)
+        return
+    await state.update_data(country=code, country_name=country)
+    await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el método de pago para continuar:", payment_methods())
 
 
 @router.callback_query(F.data.startswith("topup:method:"))
 async def topup_method(callback: CallbackQuery, state: FSMContext):
     method = callback.data.rsplit(":", 1)[1]
-    if method == "binance" and not settings.BINANCE_USDT_ENABLED:
-        await callback.answer("Binance USDT no está habilitado.", show_alert=True); return
-    if method == "yape" and not (settings.YAPE_NUMBER or settings.PLIN_NUMBER):
-        await callback.answer("Yape / Plin aún no está configurado.", show_alert=True); return
+    if method not in TOPUP_METHOD_LABELS:
+        await callback.answer("Método no disponible.", show_alert=True)
+        return
+    data = await state.get_data()
+    if not data.get("country_name"):
+        await callback.answer("Primero selecciona un país.", show_alert=True)
+        return
     await state.set_state(TopupFlow.amount)
-    await state.update_data(method=method)
-    details = (f"Yape: <code>{settings.YAPE_NUMBER or 'no configurado'}</code>\nPlin: <code>{settings.PLIN_NUMBER or 'no configurado'}</code>" if method == "yape" else f"Red: <b>{settings.BINANCE_USDT_NETWORK}</b>\nDirección: <code>{settings.BINANCE_USDT_ADDRESS}</code>")
-    await edit_or_answer(callback, f"💳 <b>RECARGA · {method.upper()}</b>\n\n{details}\n\nEscribe el monto a recargar. Usa /start para salir.")
+    await state.update_data(method=TOPUP_METHOD_LABELS[method])
+    if method == "binance" and settings.BINANCE_USDT_ENABLED and settings.BINANCE_USDT_ADDRESS:
+        details = f"Red: <b>{settings.BINANCE_USDT_NETWORK}</b>\nDirección: <code>{settings.BINANCE_USDT_ADDRESS}</code>"
+    elif method == "yape_plin" and (settings.YAPE_NUMBER or settings.PLIN_NUMBER):
+        details = f"Yape: <code>{settings.YAPE_NUMBER or 'no configurado'}</code>\nPlin: <code>{settings.PLIN_NUMBER or 'no configurado'}</code>"
+    else:
+        details = "Esta recarga se procesa de forma asistida. Contacta al administrador y conserva tu comprobante."
+    await edit_or_answer(callback, f"💳 <b>RECARGA · {TOPUP_METHOD_LABELS[method]}</b>\n📍 País: <b>{data['country_name']}</b>\n\n{details}\n\nSelecciona el monto en USD:", topup_amounts())
+
+
+@router.callback_query(F.data.startswith("topup:amount:"))
+async def topup_amount_choice(callback: CallbackQuery, state: FSMContext):
+    raw_amount = callback.data.rsplit(":", 1)[1]
+    amount = money(raw_amount)
+    if amount <= 0:
+        await callback.answer("Monto inválido.", show_alert=True)
+        return
+    await state.update_data(amount=str(amount))
+    await state.set_state(TopupFlow.proof)
+    await edit_or_answer(callback, f"💵 <b>Monto seleccionado: {m(amount)}</b>\n\nAhora envía la fotografía o documento del comprobante. Usa /start para cancelar.")
+
+
+@router.callback_query(F.data == "topup:custom")
+async def topup_custom(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(TopupFlow.amount)
+    await edit_or_answer(callback, "✍️ <b>MONTO PERSONALIZADO</b>\n\nEscribe la cantidad en USD. Ejemplo: 12.50")
 
 
 @router.message(TopupFlow.amount, F.text)
@@ -1065,7 +1218,9 @@ async def topup_document(message: Message, state: FSMContext, session: AsyncSess
 async def create_topup(message: Message, state: FSMContext, session: AsyncSession, bot: Bot, file_id: str, proof_type: str, current_user: User | None):
     user = await event_user(message, session, current_user)
     data = await state.get_data()
-    request = TopupRequest(user_id=user.id, method=data["method"], amount=money(data["amount"]), proof_file_id=file_id, proof_type=proof_type)
+    country_name = data.get("country_name", "País no indicado")
+    method = data.get("method", "Método no indicado")
+    request = TopupRequest(user_id=user.id, method=f"{country_name} · {method}", amount=money(data["amount"]), proof_file_id=file_id, proof_type=proof_type)
     session.add(request); await session.commit(); await session.refresh(request)
     await log_event(session, user.telegram_id, "topup_request", str(request.id), "pending"); await session.commit()
     await state.clear()
@@ -1076,7 +1231,8 @@ async def create_topup(message: Message, state: FSMContext, session: AsyncSessio
         try:
             if proof_type == "photo": await bot.send_photo(admin_id, file_id, caption=caption, reply_markup=markup)
             else: await bot.send_document(admin_id, file_id, caption=caption, reply_markup=markup)
-        except (TelegramForbiddenError, TelegramBadRequest): pass
+        except Exception:
+            logger.exception("No se pudo enviar la solicitud de recarga al administrador %s.", admin_id)
 
 
 @router.callback_query(F.data.regexp(r"^topup:(approve|reject):\d+$"))
@@ -1096,7 +1252,10 @@ async def review_topup(callback: CallbackQuery, bot: Bot, session: AsyncSession,
     else:
         request.status = TopupStatus.REJECTED; result = "rejected"; user_msg = "🔴 <b>RECARGA RECHAZADA</b>\n\nTu comprobante no fue aprobado. Contacta a soporte si necesitas ayuda."
     await log_event(session, reviewer.telegram_id, f"topup_{action}", str(request.id), result); await session.commit()
-    await bot.send_message(user.telegram_id, user_msg, reply_markup=nav())
+    try:
+        await bot.send_message(user.telegram_id, user_msg, reply_markup=nav())
+    except Exception:
+        logger.exception("No se pudo notificar al usuario %s sobre la recarga.", user.telegram_id)
     await edit_or_answer(callback, f"✅ Solicitud #{request.id} procesada como <b>{result}</b>.")
 
 
