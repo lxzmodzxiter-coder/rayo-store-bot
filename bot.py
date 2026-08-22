@@ -9,6 +9,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +209,17 @@ class Purchase(Base):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class KeyDelivery(Base):
+    __tablename__ = "key_deliveries"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    purchase_id: Mapped[int] = mapped_column(ForeignKey("purchases.id"), index=True, nullable=False)
+    key_value: Mapped[str] = mapped_column(Text, nullable=False)
+    duration: Mapped[str] = mapped_column(String(120), nullable=False)
+    delivered_by: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class TopupRequest(Base):
     __tablename__ = "topup_requests"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -258,6 +270,7 @@ __all__ = [
     "Base",
     "Coupon",
     "CouponRedemption",
+    "KeyDelivery",
     "Product",
     "Purchase",
     "PurchaseStatus",
@@ -492,8 +505,13 @@ def money(value: object) -> Decimal:
 
 def m(value: object) -> str:
     return f"{money(value):,.2f} {settings.CURRENCY}"
-
-
+def purchase_duration(purchase: Purchase) -> str:
+    product_name = (purchase.product_name or "").strip()
+    if product_name.endswith(")") and "(" in product_name:
+        duration = product_name.rsplit("(", 1)[1][:-1].strip()
+        if duration:
+            return duration
+    return "No especificada"
 def name_of(user: User) -> str:
     return " ".join(x for x in [user.first_name, user.last_name] if x) or str(user.telegram_id)
 
@@ -584,7 +602,8 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
             f"👤 <b>Cliente:</b> {name_of(user)}\n"
             f"🆔 <b>ID de Cuenta:</b> <code>{user.telegram_id}</code>\n"
             f"💰 <b>Saldo Disponible:</b> {m(user.balance)}\n\n"
-            f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>")
+            f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>"
+            f"{chr(10) + chr(10) + '🔐 <b>Entrega de Keys:</b> <code>/key ID KEY</code>' if is_admin(user) else ''}")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     if isinstance(target, CallbackQuery):
         await edit_or_answer(target, text, markup)
@@ -728,6 +747,47 @@ async def cmd_saldo(message: Message, bot: Bot, session: AsyncSession, current_u
         except Exception:
             # El saldo ya fue confirmado en la base de datos; un bloqueo o fallo de Telegram no lo revierte.
             logger.exception("No se pudo notificar al usuario %s sobre su saldo USD.", target.telegram_id)
+
+
+@router.message(Command("key", ignore_case=True))
+async def cmd_key(message: Message, bot: Bot, session: AsyncSession, current_user: User | None = None):
+    actor = await event_user(message, session, current_user)
+    if not is_admin(actor):
+        await message.answer("❌ Permisos insuficientes.")
+        return
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) != 3 or not parts[2].strip():
+        await message.answer("Uso: /key ID_TELEGRAM LA_KEY\nEjemplo: /key 123456789 29387429209")
+        return
+    try:
+        telegram_id = int(parts[1])
+    except ValueError:
+        await message.answer("❌ El ID de Telegram debe ser un número entero.")
+        return
+    key_value = parts[2].strip()
+    if len(key_value) > 4000:
+        await message.answer("❌ La Key es demasiado larga.")
+        return
+    target = (await session.execute(select(User).where(User.telegram_id == telegram_id).with_for_update())).scalar_one_or_none()
+    if not target:
+        await message.answer("❌ Usuario no encontrado. Debe haber usado /start previamente.")
+        return
+    purchase = (await session.execute(select(Purchase).where(Purchase.user_id == target.id, Purchase.status == PurchaseStatus.PAID).order_by(desc(Purchase.created_at), desc(Purchase.id)).limit(1).with_for_update())).scalar_one_or_none()
+    if not purchase:
+        await message.answer("❌ Este usuario no tiene una compra pagada registrada para asociar la Key.")
+        return
+    duration = purchase_duration(purchase)
+    session.add(KeyDelivery(user_id=target.id, purchase_id=purchase.id, key_value=key_value, duration=duration, delivered_by=actor.telegram_id))
+    await log_event(session, actor.telegram_id, "key_delivery", str(target.telegram_id), f"{purchase.order_id} · {duration}")
+    await session.commit()
+    safe_key = escape(key_value)
+    admin_text = f"✅ <b>KEY ENTREGADA :</b>\n\n👤 Usuario: {name_of(target)}\n🆔 ID: <code>{target.telegram_id}</code>\n🔑 <b>KEY :</b> <code>{safe_key}</code>\n⏱️ <b>DURACIÓN :</b> {escape(duration)}"
+    await message.answer(admin_text)
+    if target.telegram_id != actor.telegram_id:
+        try:
+            await bot.send_message(target.telegram_id, f"✅ <b>KEY ENTREGADA :</b>\n\n🔑 <b>KEY :</b> <code>{safe_key}</code>\n\n⏱️ <b>DURACIÓN :</b> {escape(duration)}\n\n🙏 GRACIAS POR TU COMPRA Y TU CONFIANZA")
+        except Exception:
+            logger.exception("No se pudo notificar al usuario %s sobre la Key entregada.", target.telegram_id)
 
 
 @router.callback_query(F.data == "menu:home")
