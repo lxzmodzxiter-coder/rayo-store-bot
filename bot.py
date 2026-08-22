@@ -398,6 +398,11 @@ IMAGE_BY_PRODUCT = {
     "E-SIGN": "assets/esign.jpg",
     "FLOURITE": "assets/flourite.jpg",
     "CUBAN MODS": "assets/cuban_mods.jpg",
+    "PATO TEAM": "assets/pato_team.jpg",
+    "BR MODS PC": "assets/br_mods_pc.jpg",
+    "BYPASS UID": "assets/bypass_uid.jpg",
+    "NUMEROS VIRTUALES (PARA WHATSAPP)": "assets/numeros_virtuales_whatsapp.jpg",
+    "PLATAFORMA STREAMING": "assets/plataforma_streaming.jpg",
 }
 
 
