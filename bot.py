@@ -717,12 +717,13 @@ async def product_info(callback: CallbackQuery, session: AsyncSession):
     display_status = "Disponible" if product.is_active and product.price > 0 and product.stock > 0 else ("Agotado" if product.is_active and product.price > 0 else "Pendiente de configuración")
     text = f"📦 <b>{product.name}</b>\n\n📝 {product.description or 'Sin descripción.'}\n💵 Precio: <b>{m(product.price)}</b>\n📊 Stock: {stock}\n🟢 Estado: {display_status}"
     markup = product_detail(product.id, f"cat:{product.category}", product.is_active and product.price > 0 and product.stock > 0)
-    if product.image_file_id and Path(product.image_file_id).is_file():
+    if product.image_file_id:
         try:
             await callback.message.delete()
         except TelegramBadRequest:
             pass
-        await callback.message.answer_photo(FSInputFile(product.image_file_id), caption=text, reply_markup=markup)
+        image_obj = FSInputFile(product.image_file_id) if Path(product.image_file_id).is_file() else product.image_file_id
+        await callback.message.answer_photo(image_obj, caption=text, reply_markup=markup)
         await callback.answer()
     else:
         await edit_or_answer(callback, text, markup)
@@ -1184,22 +1185,51 @@ async def product_price_prompt(callback: CallbackQuery, state: FSMContext, sessi
     await edit_or_answer(callback, "💵 Escribe el nuevo precio mayor que cero:")
 
 
-@router.message(ProductEdit.value, F.text)
+@router.callback_query(F.data.startswith("admin:product:image:"))
+async def product_image_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    if not await check_admin(callback, session, current_user): return
+    await state.set_state(ProductEdit.value); await state.update_data(edit="image", product_id=int(callback.data.split(":")[3]))
+    await edit_or_answer(callback, "🖼️ Envía la nueva imagen para este producto (o envía '-' para eliminar la imagen actual):")
+
+
+@router.callback_query(F.data.startswith("admin:product:delivery:"))
+async def product_delivery_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    if not await check_admin(callback, session, current_user): return
+    await state.set_state(ProductEdit.value); await state.update_data(edit="delivery", product_id=int(callback.data.split(":")[3]))
+    await edit_or_answer(callback, "📦 Escribe los nuevos datos de entrega (cuentas, enlaces, instrucciones) o envía '-' para dejarlos vacíos:")
+
+
+@router.message(ProductEdit.value)
 async def product_edit_value(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not is_admin(actor): await state.clear(); return
     data = await state.get_data(); product = (await session.execute(select(Product).where(Product.id == data.get("product_id")).with_for_update())).scalar_one_or_none()
     if not product: await state.clear(); await message.answer("❌ Producto inexistente."); return
-    if data.get("edit") == "stock":
+    edit_type = data.get("edit")
+    if edit_type == "stock":
+        if not message.text: await message.answer("❌ Formato inválido."); return
         try: value = int(message.text.strip())
         except ValueError: await message.answer("❌ Stock inválido."); return
         if value < 0: await message.answer("❌ El stock no puede ser negativo."); return
         product.stock = value
-    else:
+    elif edit_type == "price":
+        if not message.text: await message.answer("❌ Formato inválido."); return
         value = money(message.text)
         if value <= 0: await message.answer("❌ Precio inválido."); return
         product.price = value
-    await log_event(session, actor.telegram_id, "product_edit", str(product.id), data.get("edit", "value")); await session.commit(); await state.clear(); await message.answer("✅ Producto actualizado.", reply_markup=nav(True, "admin:products"))
+    elif edit_type == "delivery":
+        if not message.text: await message.answer("❌ Formato inválido."); return
+        product.delivery_data = None if message.text.strip() == "-" else message.text.strip()
+    elif edit_type == "image":
+        if message.text and message.text.strip() == "-":
+            product.image_file_id = None
+        elif message.photo:
+            product.image_file_id = message.photo[-1].file_id
+        else:
+            await message.answer("❌ Debes enviar una imagen válida o '-'.")
+            return
+    await log_event(session, actor.telegram_id, "product_edit", str(product.id), edit_type or "value")
+    await session.commit(); await state.clear(); await message.answer("✅ Producto actualizado.", reply_markup=nav(True, "admin:products"))
 
 
 @router.callback_query(F.data.startswith("admin:product:"))
@@ -1209,7 +1239,12 @@ async def admin_product_detail(callback: CallbackQuery, session: AsyncSession, c
     if raw == "new": return
     product = (await session.execute(select(Product).where(Product.id == int(raw)))).scalar_one_or_none()
     if not product: await callback.answer("Producto inexistente.", show_alert=True); return
-    rows = [[("🟢 Activar" if not product.is_active else "🔴 Desactivar", f"admin:product:toggle:{product.id}", None), ("🗑️ Eliminar", f"admin:product:delete:{product.id}", None)], [("📊 Modificar stock", f"admin:product:stock:{product.id}", None), ("💵 Cambiar precio", f"admin:product:price:{product.id}", None)], [("⬅️ Productos", "admin:products", None)]]
+    rows = [
+        [("🟢 Activar" if not product.is_active else "🔴 Desactivar", f"admin:product:toggle:{product.id}", None), ("🗑️ Eliminar", f"admin:product:delete:{product.id}", None)],
+        [("📊 Modificar stock", f"admin:product:stock:{product.id}", None), ("💵 Cambiar precio", f"admin:product:price:{product.id}", None)],
+        [("🖼️ Cambiar imagen", f"admin:product:image:{product.id}", None), ("📦 Cambiar entrega", f"admin:product:delivery:{product.id}", None)],
+        [("⬅️ Productos", "admin:products", None)]
+    ]
     await edit_or_answer(callback, f"📦 <b>{product.name}</b>\n\nCategoría: {product.category}\nDescripción: {product.description}\nPrecio: {m(product.price)}\nStock: {product.stock}\nEstado: {'Activo' if product.is_active else 'Inactivo'}\nVentas: {product.sales_count}", kb(rows))
 
 
