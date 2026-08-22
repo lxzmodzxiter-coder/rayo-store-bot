@@ -12,6 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Como todos los archivos estarán en la raíz, ejecutamos main.py directamente
-CMD ["python", "main.py"]
+# Ejecutamos el único módulo de aplicación.
+CMD ["python", "bot.py"]
 

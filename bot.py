@@ -1,48 +1,392 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import logging
 import math
 import secrets
+import sys
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Any
 
-from aiogram import Bot, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
-from sqlalchemy import desc, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from config import settings
-from inline import (
-    admin_home,
-    categories,
-    confirm,
-    main_menu,
-    nav,
-    payment_methods,
-    product_detail,
-    product_list,
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    TelegramObject,
 )
-from user import (
-    AuditLog,
-    BalanceTransaction,
-    BalanceTransactionType,
-    Coupon,
-    CouponRedemption,
-    Product,
-    Purchase,
-    PurchaseStatus,
-    TopupRequest,
-    TopupStatus,
-    User,
-    UserRole,
-    utcnow,
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from redis.asyncio import Redis
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    desc,
+    func,
+    or_,
+    select,
 )
+from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+
+# Configuración
+class Settings(BaseSettings):
+    BOT_TOKEN: str
+    OWNER_ID: int
+    DATABASE_URL: str
+    REDIS_URL: str
+    STORE_NAME: str = "LXZ STORE BEST"
+    CURRENCY: str = "USD"
+    TIMEZONE: str = "America/Lima"
+    OFFICIAL_CHANNEL_URL: str = ""
+    SUPPORT_USERNAME: str = ""
+    YAPE_NUMBER: str = ""
+    PLIN_NUMBER: str = ""
+    BINANCE_USDT_ENABLED: bool = False
+    BINANCE_USDT_ADDRESS: str = ""
+    BINANCE_USDT_NETWORK: str = "TRC20"
+    ADMIN_IDS: str = ""
+    REFERRAL_BONUS: float = 0.0
+    PAGE_SIZE: int = 6
+    BROADCAST_DELAY: float = 0.05
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def admin_ids(self) -> set[int]:
+        result = set()
+        for value in self.ADMIN_IDS.split(","):
+            try:
+                if value.strip():
+                    result.add(int(value.strip()))
+            except ValueError:
+                continue
+        result.add(self.OWNER_ID)
+        return result
+
+
+settings = Settings()
+
+
+# Modelos de datos
+class Base(DeclarativeBase):
+    pass
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class UserRole(str, enum.Enum):
+    USER = "user"
+    ADMIN = "admin"
+    OWNER = "owner"
+
+
+class PurchaseStatus(str, enum.Enum):
+    PAID = "paid"
+    CANCELLED = "cancelled"
+
+
+class TopupStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class BalanceTransactionType(str, enum.Enum):
+    TOPUP = "topup"
+    PURCHASE = "purchase"
+    CREDIT = "credit"
+    DEBIT = "debit"
+    REFERRAL = "referral"
+    REFUND = "refund"
+
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    username: Mapped[str | None] = mapped_column(String(64), index=True)
+    first_name: Mapped[str] = mapped_column(String(128), nullable=False, default="Usuario")
+    last_name: Mapped[str | None] = mapped_column(String(128))
+    balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    is_banned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ban_reason: Mapped[str | None] = mapped_column(String(255))
+    is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    premium_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.USER, nullable=False)
+    total_spent: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    purchases_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    referrals_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    referral_earnings: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    referred_by: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+    last_activity: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Product(Base):
+    __tablename__ = "products"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category: Mapped[str] = mapped_column(String(64), index=True, nullable=False, default="Otros")
+    name: Mapped[str] = mapped_column(String(160), index=True, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    delivery_data: Mapped[str | None] = mapped_column(Text)
+    image_file_id: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sales_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class Coupon(Base):
+    __tablename__ = "coupons"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True, nullable=False)
+    percent_off: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    fixed_off: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    usage_limit: Mapped[int | None] = mapped_column(Integer)
+    used_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class CouponRedemption(Base):
+    __tablename__ = "coupon_redemptions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    coupon_id: Mapped[int] = mapped_column(ForeignKey("coupons.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    purchase_id: Mapped[int | None] = mapped_column(ForeignKey("purchases.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (Index("ix_coupon_user", "coupon_id", "user_id", unique=True),)
+
+
+class Purchase(Base):
+    __tablename__ = "purchases"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
+    product_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    discount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
+    coupon_code: Mapped[str | None] = mapped_column(String(40))
+    delivery_data: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[PurchaseStatus] = mapped_column(SQLEnum(PurchaseStatus), default=PurchaseStatus.PAID, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TopupRequest(Base):
+    __tablename__ = "topup_requests"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    method: Mapped[str] = mapped_column(String(40), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    proof_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    proof_type: Mapped[str] = mapped_column(String(20), default="photo", nullable=False)
+    status: Mapped[TopupStatus] = mapped_column(SQLEnum(TopupStatus), default=TopupStatus.PENDING, nullable=False)
+    reviewed_by: Mapped[int | None] = mapped_column(BigInteger)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class BalanceTransaction(Base):
+    __tablename__ = "balance_transactions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    kind: Mapped[BalanceTransactionType] = mapped_column(SQLEnum(BalanceTransactionType), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    balance_after: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    reference: Mapped[str | None] = mapped_column(String(64))
+    note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    target: Mapped[str | None] = mapped_column(String(100))
+    result: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class Setting(Base):
+    __tablename__ = "settings"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
+__all__ = [
+    "AuditLog",
+    "BalanceTransaction",
+    "BalanceTransactionType",
+    "Base",
+    "Coupon",
+    "CouponRedemption",
+    "Product",
+    "Purchase",
+    "PurchaseStatus",
+    "Setting",
+    "TopupRequest",
+    "TopupStatus",
+    "User",
+    "UserRole",
+    "utcnow",
+]
+
+
+# Motor y sesiones
+engine_kwargs = {"echo": False, "pool_pre_ping": True}
+if settings.DATABASE_URL.startswith("sqlite"):
+    engine_kwargs.pop("pool_pre_ping", None)
+else:
+    engine_kwargs.update(pool_size=20, max_overflow=10)
+
+engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
+async_session_maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+
+
+# Teclados inline
+def kb(rows):
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=t, callback_data=c) if c else InlineKeyboardButton(text=t, url=u) for t, c, u in row] for row in rows])
+
+
+def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
+    rows = [
+        [("🛍️ Catálogo", "menu:catalog", None), ("👤 Mi Perfil", "menu:profile", None)],
+        [("📦 Mis Compras", "menu:purchases", None), ("💳 Recargar Saldo", "menu:balance", None)],
+        [("🎟️ Cupones", "menu:coupons", None), ("💎 Premium", "menu:premium", None)],
+        [("🎁 Referidos", "menu:referrals", None), ("📞 Soporte", "menu:support", None)],
+    ]
+    if channel_url:
+        rows.append([("📢 Canal Oficial", None, channel_url)])
+    if role in (UserRole.ADMIN, UserRole.OWNER):
+        rows.append([("⚙️ Panel Admin", "admin:home", None)])
+    if role == UserRole.OWNER:
+        rows.append([("👑 Panel Owner", "owner:home", None)])
+    return kb(rows)
+
+
+def nav(home: bool = True, back: str = "menu:home") -> InlineKeyboardMarkup:
+    rows = []
+    if back:
+        rows.append([("⬅️ Atrás", back, None)])
+    if home:
+        rows.append([("🏠 Inicio", "menu:home", None)])
+    return kb(rows)
+
+
+def categories(categories: list[str]) -> InlineKeyboardMarkup:
+    rows = [[(f"{name}", f"cat:{name}", None)] for name in categories]
+    rows.append([("🔎 Buscar producto", "product:search", None)])
+    rows.extend([[ ("🏠 Inicio", "menu:home", None) ]])
+    return kb(rows)
+
+
+def product_list(items, page: int, pages: int, category: str) -> InlineKeyboardMarkup:
+    rows = [[(f"📦 {p.name} · {p.price:.2f}", f"product:{p.id}", None)] for p in items]
+    pager = []
+    if page > 0:
+        pager.append(("◀️ Anterior", f"products:{category}:{page-1}", None))
+    if page + 1 < pages:
+        pager.append(("▶️ Siguiente", f"products:{category}:{page+1}", None))
+    if pager:
+        rows.append(pager)
+    rows.append([("⬅️ Categorías", "menu:catalog", None)])
+    return kb(rows)
+
+
+def product_detail(product_id: int, back: str) -> InlineKeyboardMarkup:
+    return kb([
+        [("🛒 Comprar", f"buy:{product_id}", None)],
+        [("⬅️ Atrás", back, None), ("🏠 Inicio", "menu:home", None)],
+    ])
+
+
+def confirm(action: str, cancel: str = "menu:home") -> InlineKeyboardMarkup:
+    return kb([[ ("✅ Confirmar", action, None), ("❌ Cancelar", cancel, None) ]])
+
+
+def payment_methods(yape_enabled: bool = True, binance_enabled: bool = True) -> InlineKeyboardMarkup:
+    rows = []
+    if yape_enabled:
+        rows.append([("🇵🇪 Yape / Plin", "topup:method:yape", None)])
+    if binance_enabled:
+        rows.append([("💰 Binance USDT", "topup:method:binance", None)])
+    rows.append([("⬅️ Atrás", "menu:home", None)])
+    return kb(rows)
+
+
+def admin_home(owner: bool = False) -> InlineKeyboardMarkup:
+    rows = [
+        [("👥 Usuarios", "admin:users", None), ("📦 Productos", "admin:products", None)],
+        [("💳 Pagos", "admin:payments", None), ("📊 Estadísticas", "admin:stats", None)],
+        [("📢 Difusión", "admin:broadcast", None), ("🎟️ Cupones", "admin:coupons", None)],
+        [("💰 Créditos", "admin:credits", None), ("🚫 Seguridad", "admin:security", None)],
+    ]
+    if owner:
+        rows.extend([
+            [("⚙️ Administradores", "owner:admins", None), ("📜 Registros", "owner:logs", None)],
+            [("🔧 Configuración", "owner:config", None)],
+        ])
+    rows.append([("🏠 Inicio", "menu:home", None)])
+    return kb(rows)
+
+
+# Middleware de base de datos
+class DatabaseMiddleware(BaseMiddleware):
+    async def __call__(self, handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]], event: TelegramObject, data: dict[str, Any]) -> Any:
+        async with async_session_maker() as session:
+            data["session"] = session
+            return await handler(event, data)
+
+
+# Middleware de autenticación
+class AuthMiddleware(BaseMiddleware):
+    async def __call__(self, handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]], event: TelegramObject, data: dict[str, Any]) -> Any:
+        session: AsyncSession | None = data.get("session")
+        if session is None or not isinstance(event, (Message, CallbackQuery)) or not event.from_user:
+            return await handler(event, data)
+        user = (await session.execute(select(User).where(User.telegram_id == event.from_user.id))).scalar_one_or_none()
+        if user and user.is_banned:
+            if isinstance(event, CallbackQuery):
+                await event.answer("🚫 Acceso restringido.", show_alert=True)
+            else:
+                await event.answer("🚫 <b>ACCESO RESTRINGIDO</b>\n\nTu acceso a LXZ STORE BEST se encuentra limitado.")
+            return
+        data["current_user"] = user
+        return await handler(event, data)
+
+
+# Handlers y lógica de negocio
 router = Router()
 logger = logging.getLogger(__name__)
 PAGE_SIZE = max(1, settings.PAGE_SIZE)
@@ -377,7 +721,6 @@ async def render_purchases(callback: CallbackQuery, session: AsyncSession, user:
     if page + 1 < pages: pager.append(("▶️ Siguiente", f"purchases:{page+1}", None))
     if pager: rows.append(pager)
     rows.append([("🏠 Inicio", "menu:home", None)])
-    from inline import kb
     await edit_or_answer(callback, text, kb(rows))
 
 
@@ -450,7 +793,6 @@ async def create_topup(message: Message, state: FSMContext, session: AsyncSessio
     await log_event(session, user.telegram_id, "topup_request", str(request.id), "pending"); await session.commit()
     await state.clear()
     await message.answer(f"🟡 <b>RECARGA PENDIENTE</b>\n\nMonto: {m(request.amount)}\nMétodo: {request.method}\nSolicitud: <code>#{request.id}</code>\n\nUn administrador revisará tu comprobante.", reply_markup=nav())
-    from inline import kb
     markup = kb([[ ("✅ Aprobar", f"topup:approve:{request.id}", None), ("❌ Rechazar", f"topup:reject:{request.id}", None) ]])
     caption = f"🧾 <b>SOLICITUD DE RECARGA #{request.id}</b>\n👤 Usuario: {name_of(user)}\n🆔 ID: <code>{user.telegram_id}</code>\n💵 Monto: {m(request.amount)}\n💳 Método: {request.method}\n📅 Fecha: {now_text()}\n📌 Estado: Pendiente"
     for admin_id in settings.admin_ids:
@@ -582,7 +924,6 @@ async def admin_user_search(message: Message, state: FSMContext, session: AsyncS
     try: filters.append(User.telegram_id == int(query))
     except ValueError: pass
     users = (await session.execute(select(User).where(or_(*filters)).limit(10))).scalars().all()
-    from inline import kb
     rows = [[(f"{name_of(u)} · {u.telegram_id}", f"admin:user:{u.telegram_id}", None)] for u in users]
     rows.append([("⚙️ Panel Admin", "admin:home", None)])
     await message.answer("🔎 Resultados:\n\n" + ("\n".join(f"• {name_of(u)} · {u.telegram_id}" for u in users) if users else "No encontramos usuarios."), reply_markup=kb(rows))
@@ -595,7 +936,6 @@ async def admin_user_detail(callback: CallbackQuery, session: AsyncSession, curr
     if not actor: return
     target = (await session.execute(select(User).where(User.telegram_id == int(callback.data.split(":")[2])))).scalar_one_or_none()
     if not target: await callback.answer("Usuario no encontrado.", show_alert=True); return
-    from inline import kb
     rows = [[("💰 Dar créditos", f"admin:balance:add:{target.telegram_id}", None), ("➖ Quitar créditos", f"admin:balance:sub:{target.telegram_id}", None)], [("💎 Activar Premium", f"admin:premium:on:{target.telegram_id}", None), ("❌ Quitar Premium", f"admin:premium:off:{target.telegram_id}", None)]]
     rows.append([("✅ Desbanear" if target.is_banned else "🚫 Banear", f"admin:ban:{'off' if target.is_banned else 'on'}:{target.telegram_id}", None), ("⚙️ Panel Admin", "admin:home", None)])
     await edit_or_answer(callback, f"👤 <b>USUARIO</b>\n\nNombre: {name_of(target)}\nUsername: @{target.username or '—'}\nID: <code>{target.telegram_id}</code>\nSaldo: {m(target.balance)}\nPremium: {active_premium(target)}\nCompras: {target.purchases_count}\nEstado: {'Baneado' if target.is_banned else 'Activo'}", kb(rows))
@@ -620,7 +960,6 @@ async def admin_balance_amount(message: Message, state: FSMContext, session: Asy
     sign = 1 if data["kind"] == "add" else -1
     if sign < 0 and money(target.balance) < amount: await message.answer("❌ El saldo no puede quedar negativo."); return
     await state.update_data(amount=str(amount))
-    from inline import kb
     await message.answer(f"⚠️ <b>CONFIRMACIÓN</b>\n\n👤 Usuario: {name_of(target)}\n💰 Saldo actual: {m(target.balance)}\n{'➕' if sign > 0 else '➖'} Cantidad: {m(amount)}\n💰 Nuevo saldo: {m(money(target.balance) + sign * amount)}", reply_markup=kb([[ ("✅ Confirmar", "admin:balance:confirm", None), ("❌ Cancelar", "admin:home", None) ]]))
 
 
@@ -656,7 +995,6 @@ async def admin_ban_confirm(callback: CallbackQuery, session: AsyncSession, curr
     actor = await check_admin(callback, session, current_user)
     if not actor: return
     _, _, action, raw = callback.data.split(":")
-    from inline import kb
     await edit_or_answer(callback, f"⚠️ ¿Confirmar {'baneo' if action == 'on' else 'desbaneo'} del usuario <code>{raw}</code>?", kb([[ ("✅ Confirmar", f"admin:banconfirm:{action}:{raw}", None), ("❌ Cancelar", "admin:home", None) ]]))
 
 
@@ -677,7 +1015,6 @@ async def admin_ban_apply(callback: CallbackQuery, bot: Bot, session: AsyncSessi
 async def admin_products(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     if not await check_admin(callback, session, current_user): return
     products = (await session.execute(select(Product).order_by(Product.id.desc()).limit(20))).scalars().all()
-    from inline import kb
     rows = [[(f"{'🟢' if p.is_active else '🔴'} {p.name[:28]} · {m(p.price)} · stock {p.stock}", f"admin:product:{p.id}", None)] for p in products]
     rows.append([("➕ Crear producto", "admin:product:new", None), ("⬅️ Panel", "admin:home", None)])
     await edit_or_answer(callback, "📦 <b>ADMINISTRACIÓN DE PRODUCTOS</b>\n\nSelecciona un producto:", kb(rows))
@@ -753,7 +1090,6 @@ async def admin_product_detail(callback: CallbackQuery, session: AsyncSession, c
     if raw == "new": return
     product = (await session.execute(select(Product).where(Product.id == int(raw)))).scalar_one_or_none()
     if not product: await callback.answer("Producto inexistente.", show_alert=True); return
-    from inline import kb
     rows = [[("🟢 Activar" if not product.is_active else "🔴 Desactivar", f"admin:product:toggle:{product.id}", None), ("🗑️ Eliminar", f"admin:product:delete:{product.id}", None)], [("📊 Modificar stock", f"admin:product:stock:{product.id}", None), ("💵 Cambiar precio", f"admin:product:price:{product.id}", None)], [("⬅️ Productos", "admin:products", None)]]
     await edit_or_answer(callback, f"📦 <b>{product.name}</b>\n\nCategoría: {product.category}\nDescripción: {product.description}\nPrecio: {m(product.price)}\nStock: {product.stock}\nEstado: {'Activo' if product.is_active else 'Inactivo'}\nVentas: {product.sales_count}", kb(rows))
 
@@ -780,7 +1116,6 @@ async def product_delete(callback: CallbackQuery, session: AsyncSession, current
 async def admin_payments(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     if not await check_admin(callback, session, current_user): return
     requests = (await session.execute(select(TopupRequest).where(TopupRequest.status == TopupStatus.PENDING).order_by(TopupRequest.created_at).limit(10))).scalars().all()
-    from inline import kb
     rows = [[(f"🟡 #{r.id} · {m(r.amount)} · {r.method}", f"topup:view:{r.id}", None)] for r in requests]
     rows.append([("⬅️ Panel Admin", "admin:home", None)])
     await edit_or_answer(callback, "💳 <b>PAGOS PENDIENTES</b>\n\n" + ("\n".join(f"#{r.id} · {m(r.amount)} · {r.method}" for r in requests) if requests else "No hay solicitudes pendientes."), kb(rows))
@@ -791,7 +1126,6 @@ async def topup_view(callback: CallbackQuery, session: AsyncSession, current_use
     if not await check_admin(callback, session, current_user): return
     request = (await session.execute(select(TopupRequest).where(TopupRequest.id == int(callback.data.split(":")[2])))).scalar_one_or_none()
     if not request: await callback.answer("Solicitud inexistente.", show_alert=True); return
-    from inline import kb
     await edit_or_answer(callback, f"🧾 <b>SOLICITUD #{request.id}</b>\n\nMonto: {m(request.amount)}\nMétodo: {request.method}\nEstado: {request.status.value}\nFecha: {now_text(request.created_at)}\n\nEl comprobante fue enviado al canal administrativo al registrarse.", kb([[ ("✅ Aprobar", f"topup:approve:{request.id}", None), ("❌ Rechazar", f"topup:reject:{request.id}", None) ], [("⬅️ Pagos", "admin:payments", None) ]]))
 
 
@@ -837,7 +1171,6 @@ async def broadcast_preview(message: Message, state: FSMContext, session: AsyncS
     actor = await event_user(message, session, current_user)
     if not is_admin(actor): await state.clear(); return
     await state.update_data(source_chat=message.chat.id, source_message=message.message_id)
-    from inline import kb
     await message.answer("⚠️ ¿Confirmar difusión a todos los usuarios activos?", reply_markup=kb([[ ("✅ Confirmar", "admin:broadcast:confirm", None), ("❌ Cancelar", "admin:home", None) ]]))
 
 
@@ -904,7 +1237,6 @@ async def product_search_start(callback: CallbackQuery, state: FSMContext):
 @router.message(ProductSearch.waiting, F.text)
 async def product_search(message: Message, state: FSMContext, session: AsyncSession):
     query = message.text.strip(); products = (await session.execute(select(Product).where(Product.is_active.is_(True), Product.name.ilike(f"%{query}%")).limit(10))).scalars().all()
-    from inline import kb
     rows = [[(f"📦 {p.name} · {m(p.price)}", f"product:{p.id}", None)] for p in products]; rows.append([("⬅️ Catálogo", "menu:catalog", None)])
     await state.clear(); await message.answer(("🔎 <b>RESULTADOS</b>\n\n" + "\n".join(f"• {p.name} — {m(p.price)}" for p in products)) if products else "❌ No encontramos productos relacionados.", reply_markup=kb(rows))
 
@@ -912,3 +1244,56 @@ async def product_search(message: Message, state: FSMContext, session: AsyncSess
 @router.callback_query()
 async def fallback_callback(callback: CallbackQuery):
     await callback.answer("Esta opción ya no está disponible. Abre el menú principal.", show_alert=True)
+
+
+# Arranque
+# Importamos nuestros propios archivos y modelos
+
+# Configuración para ver errores y mensajes en la consola de Railway
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
+
+async def main() -> None:
+    # 0. Creamos las tablas en PostgreSQL automáticamente si no existen
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("📦 Tablas de la base de datos verificadas/creadas con éxito.")
+
+    # 1. Conexión a Redis
+    redis_client = Redis.from_url(settings.REDIS_URL)
+    storage = RedisStorage(redis=redis_client)
+
+    # 2. Inicializamos el Bot de Telegram
+    bot = Bot(
+        token=settings.BOT_TOKEN,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+    dp = Dispatcher(storage=storage)
+
+    # 3. Activamos los guardias de seguridad (Middlewares)
+    dp.update.middleware(DatabaseMiddleware())
+    dp.update.middleware(AuthMiddleware())
+
+    # 4. Registramos los comandos (nuestro archivo start.py)
+    dp.include_router(router)
+
+    logger.info("⚡ LXZ STORE BEST iniciado correctamente en modo producción.")
+    
+    try:
+        # 5. Ponemos al bot a escuchar a los usuarios
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        # Apagado seguro si se reinicia el servidor
+        await bot.session.close()
+        await redis_client.aclose()
+        await engine.dispose()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot detenido manualmente.")
