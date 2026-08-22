@@ -43,6 +43,7 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    update,
 )
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -565,7 +566,8 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
             "/agregas — agregar un producto o APK (Admin)\n"
             "/stock — ver inventario\n"
             "/actualizarstock — actualizar stock (Admin)\n"
-            "/broadcast — enviar difusión (Admin)\n\n"
+            "/broadcast — enviar difusión (Admin)\n"
+            "/creditos ID cantidad — dar saldo (Admin)\n\n"
             "También puedes usar los botones de la tienda:")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     if isinstance(target, CallbackQuery):
@@ -574,15 +576,29 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
         await target.answer(text, reply_markup=markup)
 
 
+LEGACY_CATEGORY_MAP = {
+    "🤖 Android": "Android",
+    "🍎 iOS / iPhone": "iOS",
+    "🍎 iOS": "iOS",
+    "💻 Windows / PC": "PC",
+    "💻 PC": "PC",
+    "🌐 Otros": "Otros",
+}
+
+
 async def seed_initial_products(session: AsyncSession) -> None:
+    for legacy, current in LEGACY_CATEGORY_MAP.items():
+        await session.execute(update(Product).where(Product.category == legacy).values(category=current))
     for category, names in INITIAL_PRODUCTS.items():
         for name in names:
-            existing = (await session.execute(select(Product).where(Product.category == category, Product.name == name))).scalar_one_or_none()
+            existing = (await session.execute(select(Product).where(Product.name == name))).scalar_one_or_none()
             image_path = image_for_product(name)
             if not existing:
                 session.add(Product(category=category, name=name, description="Producto agregado; configura precio, stock y entrega desde /agregas.", price=Decimal("0.00"), stock=0, image_file_id=image_path, is_active=False))
-            elif image_path and not existing.image_file_id:
-                existing.image_file_id = image_path
+            else:
+                existing.category = category
+                if image_path and not existing.image_file_id:
+                    existing.image_file_id = image_path
     await session.commit()
 
 
@@ -662,6 +678,36 @@ async def cmd_broadcast(message: Message, state: FSMContext, session: AsyncSessi
     await message.answer("📢 Envía ahora el mensaje, foto, vídeo, documento o sticker que deseas difundir. Usa /start para cancelar.")
 
 
+@router.message(Command("creditos"))
+async def cmd_creditos(message: Message, session: AsyncSession, current_user: User | None = None):
+    actor = await event_user(message, session, current_user)
+    if not is_admin(actor):
+        await message.answer("❌ Permisos insuficientes.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 3:
+        await message.answer("Uso: /creditos ID_TELEGRAM CANTIDAD\nEjemplo: /creditos 123456789 10")
+        return
+    try:
+        telegram_id = int(parts[1])
+        amount = money(parts[2])
+    except (ValueError, InvalidOperation):
+        await message.answer("❌ El ID debe ser entero y la cantidad debe ser numérica.")
+        return
+    if amount <= 0:
+        await message.answer("❌ La cantidad debe ser mayor que cero.")
+        return
+    target = (await session.execute(select(User).where(User.telegram_id == telegram_id).with_for_update())).scalar_one_or_none()
+    if not target:
+        await message.answer("❌ Usuario no encontrado. Debe haber usado /start previamente.")
+        return
+    target.balance = money(target.balance) + amount
+    session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT, amount=amount, balance_after=target.balance, reference=str(actor.telegram_id), note="/creditos"))
+    await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"+{amount}")
+    await session.commit()
+    await message.answer(f"✅ Créditos agregados.\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: {m(amount)}\n💰 Nuevo saldo: {m(target.balance)}")
+
+
 @router.callback_query(F.data == "menu:home")
 async def menu_home(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None, state: FSMContext | None = None):
     if state:
@@ -673,6 +719,7 @@ async def menu_home(callback: CallbackQuery, session: AsyncSession, current_user
 
 @router.callback_query(F.data == "menu:catalog")
 async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
+    await seed_initial_products(session)
     db_categories = (await session.execute(select(Product.category).distinct())).scalars().all()
     values = list(dict.fromkeys(CATEGORIES + [x for x in db_categories if x not in CATEGORIES]))
     await edit_or_answer(callback, "🛍️ <b>CATÁLOGO</b>\n\nSelecciona una categoría:", categories(values))
