@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     REFERRAL_BONUS: float = 0.0
     PAGE_SIZE: int = 6
     BROADCAST_DELAY: float = 0.05
-    APP_VERSION: str = "catalog-fix-2026-08-22"
+    APP_VERSION: str = "saldo-usd-2026-08-22"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -359,7 +359,7 @@ def admin_home(owner: bool = False) -> InlineKeyboardMarkup:
         [("👥 Usuarios", "admin:users", None), ("📦 Productos", "admin:products", None)],
         [("💳 Pagos", "admin:payments", None), ("📊 Estadísticas", "admin:stats", None)],
         [("📢 Difusión", "admin:broadcast", None), ("🎟️ Cupones", "admin:coupons", None)],
-        [("💰 Créditos", "admin:credits", None), ("🚫 Seguridad", "admin:security", None)],
+        [("💰 Saldo USD", "admin:credits", None), ("🚫 Seguridad", "admin:security", None)],
     ]
     if owner:
         rows.extend([
@@ -694,15 +694,15 @@ async def cmd_broadcast(message: Message, state: FSMContext, session: AsyncSessi
     await message.answer("📢 Envía ahora el mensaje, foto, vídeo, documento o sticker que deseas difundir. Usa /start para cancelar.")
 
 
-@router.message(Command("creditos"))
-async def cmd_creditos(message: Message, bot: Bot, session: AsyncSession, current_user: User | None = None):
+@router.message(Command("saldo", ignore_case=True))
+async def cmd_saldo(message: Message, bot: Bot, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not is_admin(actor):
         await message.answer("❌ Permisos insuficientes.")
         return
     parts = (message.text or "").split()
-    if len(parts) != 3:
-        await message.answer("Uso: /creditos ID_TELEGRAM CANTIDAD\nEjemplo: /creditos 123456789 10")
+    if len(parts) != 4 or parts[3].upper() != "USD":
+        await message.answer("Uso: /saldo ID_TELEGRAM CANTIDAD USD\nEjemplo: /saldo 123456789 10 USD")
         return
     try:
         telegram_id = int(parts[1])
@@ -718,15 +718,16 @@ async def cmd_creditos(message: Message, bot: Bot, session: AsyncSession, curren
         await message.answer("❌ Usuario no encontrado. Debe haber usado /start previamente.")
         return
     target.balance = money(target.balance) + amount
-    session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT, amount=amount, balance_after=target.balance, reference=str(actor.telegram_id), note="/creditos"))
+    session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT, amount=amount, balance_after=target.balance, reference=str(actor.telegram_id), note="/saldo USD"))
     await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"+{amount}")
     await session.commit()
-    await message.answer(f"✅ <b>CRÉDITOS ENTREGADOS</b>\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: {m(amount)}\n💰 Nuevo saldo: {m(target.balance)}")
+    await message.answer(f"✅ <b>SALDO ENTREGADO</b>\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: +{m(amount)} USD\n💰 Nuevo saldo: {m(target.balance)} USD")
     if target.telegram_id != actor.telegram_id:
         try:
-            await bot.send_message(target.telegram_id, f"💰 <b>CRÉDITOS RECIBIDOS</b>\n\nSe agregaron: <b>+{m(amount)}</b>\nSaldo actual: <b>{m(target.balance)}</b>")
-        except (TelegramForbiddenError, TelegramBadRequest):
-            logger.warning("No se pudo notificar al usuario %s sobre sus créditos.", target.telegram_id)
+            await bot.send_message(target.telegram_id, f"💰 <b>SALDO USD RECIBIDO</b>\n\nSe agregaron: <b>+{m(amount)} USD</b>\nSaldo actual: <b>{m(target.balance)} USD</b>")
+        except Exception:
+            # El saldo ya fue confirmado en la base de datos; un bloqueo o fallo de Telegram no lo revierte.
+            logger.exception("No se pudo notificar al usuario %s sobre su saldo USD.", target.telegram_id)
 
 
 @router.callback_query(F.data == "menu:home")
@@ -1152,7 +1153,7 @@ async def admin_user_detail(callback: CallbackQuery, session: AsyncSession, curr
     if not actor: return
     target = (await session.execute(select(User).where(User.telegram_id == int(callback.data.split(":")[2])))).scalar_one_or_none()
     if not target: await callback.answer("Usuario no encontrado.", show_alert=True); return
-    rows = [[("💰 Dar créditos", f"admin:balance:add:{target.telegram_id}", None), ("➖ Quitar créditos", f"admin:balance:sub:{target.telegram_id}", None)], [("💎 Activar Premium", f"admin:premium:on:{target.telegram_id}", None), ("❌ Quitar Premium", f"admin:premium:off:{target.telegram_id}", None)]]
+    rows = [[("💰 Dar saldo USD", f"admin:balance:add:{target.telegram_id}", None), ("➖ Quitar saldo USD", f"admin:balance:sub:{target.telegram_id}", None)], [("💎 Activar Premium", f"admin:premium:on:{target.telegram_id}", None), ("❌ Quitar Premium", f"admin:premium:off:{target.telegram_id}", None)]]
     rows.append([("✅ Desbanear" if target.is_banned else "🚫 Banear", f"admin:ban:{'off' if target.is_banned else 'on'}:{target.telegram_id}", None), ("⚙️ Panel Admin", "admin:home", None)])
     await edit_or_answer(callback, f"👤 <b>USUARIO</b>\n\nNombre: {name_of(target)}\nUsername: @{target.username or '—'}\nID: <code>{target.telegram_id}</code>\nSaldo: {m(target.balance)}\nPremium: {active_premium(target)}\nCompras: {target.purchases_count}\nEstado: {'Baneado' if target.is_banned else 'Activo'}", kb(rows))
 
@@ -1190,10 +1191,10 @@ async def admin_balance_confirm(callback: CallbackQuery, state: FSMContext, bot:
     session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT if sign > 0 else BalanceTransactionType.DEBIT, amount=sign * amount, balance_after=target.balance, reference=str(actor.telegram_id)))
     await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"{sign * amount}"); await session.commit(); await state.clear()
     try:
-        await bot.send_message(target.telegram_id, f"💰 <b>{'CRÉDITOS RECIBIDOS' if sign > 0 else 'CRÉDITOS DESCONTADOS'}</b>\n\nMovimiento: {'+' if sign > 0 else '-'}{m(amount)}\nNuevo saldo: {m(target.balance)}")
+        await bot.send_message(target.telegram_id, f"💰 <b>{'SALDO USD RECIBIDO' if sign > 0 else 'SALDO USD DESCONTADO'}</b>\n\nMovimiento: {'+' if sign > 0 else '-'}{m(amount)} USD\nNuevo saldo: {m(target.balance)} USD")
     except (TelegramForbiddenError, TelegramBadRequest):
         logger.warning("No se pudo notificar al usuario %s sobre el cambio de saldo.", target.telegram_id)
-    await edit_or_answer(callback, f"✅ <b>{'CRÉDITOS ENTREGADOS' if sign > 0 else 'CRÉDITOS DESCONTADOS'}</b>.\n\nNuevo saldo: {m(target.balance)}", nav(True, "admin:home"))
+    await edit_or_answer(callback, f"✅ <b>{'SALDO USD ENTREGADO' if sign > 0 else 'SALDO USD DESCONTADO'}</b>.\n\nNuevo saldo: {m(target.balance)} USD", nav(True, "admin:home"))
 
 
 @router.callback_query(F.data.startswith("admin:premium:"))
@@ -1477,7 +1478,7 @@ async def admin_secondary(callback: CallbackQuery, session: AsyncSession, curren
     actor = await check_admin(callback, session, current_user)
     if not actor: return
     if callback.data == "admin:security": text = "🛡️ <b>SEGURIDAD</b>\n\nTodas las acciones administrativas vuelven a verificar el rol. Las compras y aprobaciones usan bloqueo de fila y estados para evitar duplicados."
-    elif callback.data == "admin:credits": text = "💰 <b>CRÉDITOS</b>\n\nBusca un usuario desde Usuarios para agregar o quitar saldo con confirmación y registro de auditoría."
+    elif callback.data == "admin:credits": text = "💰 <b>SALDO USD</b>\n\nBusca un usuario desde Usuarios para agregar o quitar saldo con confirmación y registro de auditoría."
     else: text = f"🔧 <b>CONFIGURACIÓN</b>\n\nTienda: {settings.STORE_NAME}\nMoneda: {settings.CURRENCY}\nZona horaria: {settings.TIMEZONE}\nYape/Plin: {'configurado' if settings.YAPE_NUMBER or settings.PLIN_NUMBER else 'no configurado'}\nBinance: {'habilitado' if settings.BINANCE_USDT_ENABLED else 'deshabilitado'}"
     await edit_or_answer(callback, text, nav(True, "owner:home" if callback.data == "owner:config" else "admin:home"))
 
