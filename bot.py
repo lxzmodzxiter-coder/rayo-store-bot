@@ -285,13 +285,14 @@ def kb(rows):
 
 def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
     rows = [
-        [("🛍️ Catálogo", "menu:catalog", None), ("👤 Mi Perfil", "menu:profile", None)],
-        [("📦 Mis Compras", "menu:purchases", None), ("💳 Recargar Saldo", "menu:balance", None)],
-        [("🎟️ Cupones", "menu:coupons", None), ("💎 Premium", "menu:premium", None)],
-        [("🎁 Referidos", "menu:referrals", None), ("📞 Soporte", "menu:support", None)],
+        [("🛍️ VER CATALOGO SOCIOS", "menu:catalog", None)],
+        [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
+        [("👤 Mi Perfil / Historial", "menu:profile", None)],
+        [("💎 Adquirir Premium ( 10% OFF 💰)", "menu:premium", None)],
+        [("📞 Soporte Directo", "menu:support", None)],
     ]
     if channel_url:
-        rows.append([("📢 Canal Oficial", None, channel_url)])
+        rows[-1].append(("📢 Canal Oficial", None, channel_url))
     if role in (UserRole.ADMIN, UserRole.OWNER):
         rows.append([("⚙️ Panel Admin", "admin:home", None)])
     if role == UserRole.OWNER:
@@ -310,13 +311,12 @@ def nav(home: bool = True, back: str = "menu:home") -> InlineKeyboardMarkup:
 
 def categories(categories: list[str]) -> InlineKeyboardMarkup:
     rows = [[(CATEGORY_LABELS.get(name, name), f"cat:{name}", None)] for name in categories]
-    rows.append([("🔎 Buscar producto", "product:search", None)])
-    rows.extend([[ ("🏠 Inicio", "menu:home", None) ]])
+    rows.append([("⬅️ Regresar al Inicio", "menu:home", None)])
     return kb(rows)
 
 
 def product_list(items, page: int, pages: int, category: str) -> InlineKeyboardMarkup:
-    rows = [[(f"📦 {p.name} · {p.price:.2f}", f"product:{p.id}", None)] for p in items]
+    rows = [[(f"📦 {p.name} 📥", f"product:{p.id}", None)] for p in items]
     pager = []
     if page > 0:
         pager.append(("◀️ Anterior", f"products:{category}:{page-1}", None))
@@ -324,15 +324,19 @@ def product_list(items, page: int, pages: int, category: str) -> InlineKeyboardM
         pager.append(("▶️ Siguiente", f"products:{category}:{page+1}", None))
     if pager:
         rows.append(pager)
-    rows.append([("⬅️ Categorías", "menu:catalog", None)])
+    rows.append([("⬅️ Volver a las Categorías", "menu:catalog", None)])
     return kb(rows)
 
 
-def product_detail(product_id: int, back: str, can_buy: bool = True) -> InlineKeyboardMarkup:
+def product_detail(product_id: int, back: str, can_buy: bool = True, variants: list | None = None) -> InlineKeyboardMarkup:
     rows = []
     if can_buy:
-        rows.append([("🛒 Comprar", f"buy:{product_id}", None)])
-    rows.append([("⬅️ Atrás", back, None), ("🏠 Inicio", "menu:home", None)])
+        if variants:
+            for v_name, v_price in variants:
+                rows.append([(f"⏳ {v_name} | {v_price}", f"buy:{product_id}:{v_name}", None)])
+        else:
+            rows.append([("🛒 Comprar", f"buy:{product_id}:default", None)])
+    rows.append([("⬅️ Volver a Productos", back, None)])
     return kb(rows)
 
 
@@ -396,7 +400,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 PAGE_SIZE = max(1, settings.PAGE_SIZE)
 CATEGORIES = ["Android", "iOS", "PC", "Otros"]
-CATEGORY_LABELS = {"Android": "🤖 Android", "iOS": "🍎 iOS", "PC": "💻 PC", "Otros": "🌐 Otros"}
+CATEGORY_LABELS = {"Android": "📁 APK MODZ / ANDROID", "iOS": "📁 IPHONE / IOS", "PC": "💻 WINDOWS / PC", "Otros": "📁 OTROS"}
 IMAGE_BY_PRODUCT = {
     "DRIP CLIENT": "assets/drip_client_android.jpg",
     "PRÓXY ANDROID": "assets/drip_client_free_fire.jpg",
@@ -568,14 +572,11 @@ async def notify_staff(bot: Bot, text: str, markup=None) -> None:
 
 
 async def show_home(target: Message | CallbackQuery, user: User) -> None:
-    text = (f"⚡ <b>{settings.STORE_NAME}</b>\n\nBienvenido, {name_of(user)}.\n\n"
-            "Comandos disponibles:\n"
-            "/agregas — agregar un producto o APK (Admin)\n"
-            "/stock — ver inventario\n"
-            "/actualizarstock — actualizar stock (Admin)\n"
-            "/broadcast — enviar difusión (Admin)\n"
-            "/creditos ID cantidad — dar saldo (Admin)\n\n"
-            "También puedes usar los botones de la tienda:")
+    text = (f"💬 <b>RESELLERS STORE EXCLUSIVE</b> 🛍️\n\n"
+            f"👤 <b>Cliente:</b> {name_of(user)}\n"
+            f"🆔 <b>ID de Cuenta:</b> <code>{user.telegram_id}</code>\n"
+            f"💰 <b>Saldo Disponible:</b> {m(user.balance)}\n\n"
+            f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     if isinstance(target, CallbackQuery):
         await edit_or_answer(target, text, markup)
@@ -729,7 +730,8 @@ async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
     await seed_initial_products(session)
     db_categories = (await session.execute(select(Product.category).distinct())).scalars().all()
     values = list(dict.fromkeys(CATEGORIES + [x for x in db_categories if x not in CATEGORIES]))
-    await edit_or_answer(callback, "🛍️ <b>CATÁLOGO</b>\n\nSelecciona una categoría:", categories(values))
+    text = "🛒 <b>CATEGORÍAS DISPONIBLES</b> 🎮\nSelecciona la categoría de tu interés, bb:"
+    await edit_or_answer(callback, text, categories(values))
 
 
 async def render_products(callback: CallbackQuery, session: AsyncSession, category: str, page: int):
@@ -739,14 +741,9 @@ async def render_products(callback: CallbackQuery, session: AsyncSession, catego
     page = max(0, min(page, pages - 1))
     items = all_items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
     if not items:
-        text = f"📦 <b>{category}</b>\n\nNo hay productos disponibles en esta categoría."
+        text = f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\nNo hay productos disponibles en esta categoría."
     else:
-        lines = [f"📦 <b>{category}</b> · Página {page + 1}/{pages}", ""]
-        for p in items:
-            stock = "Agotado" if p.stock <= 0 else str(p.stock)
-            status = "Disponible" if p.is_active and p.price > 0 and p.stock > 0 else "Pendiente de configuración"
-            lines.append(f"• <b>{p.name}</b> — {m(p.price)} · Stock: {stock} · {status}")
-        text = "\n".join(lines)
+        text = f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\n📦 <b>PRODUCTOS DISPONIBLES</b> 🔥\nSelecciona lo que te vas a llevar:"
     await edit_or_answer(callback, text, product_list(items, page, pages, category))
 
 
@@ -765,12 +762,30 @@ async def catalog_page(callback: CallbackQuery, session: AsyncSession):
 async def product_info(callback: CallbackQuery, session: AsyncSession):
     product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[1])))).scalar_one_or_none()
     if not product:
-        await callback.answer("Producto no disponible.", show_alert=True)
+        await callback.answer("Producto no encontrado.", show_alert=True)
         return
-    stock = "Agotado" if product.stock <= 0 else str(product.stock)
-    display_status = "Disponible" if product.is_active and product.price > 0 and product.stock > 0 else ("Agotado" if product.is_active and product.price > 0 else "Pendiente de configuración")
-    text = f"📦 <b>{product.name}</b>\n\n📝 {product.description or 'Sin descripción.'}\n💵 Precio: <b>{m(product.price)}</b>\n📊 Stock: {stock}\n🟢 Estado: {display_status}"
-    markup = product_detail(product.id, f"cat:{product.category}", product.is_active and product.price > 0 and product.stock > 0)
+
+    # Parse variants if stored in delivery_data or use single price
+    variants = []
+    if product.description and "|" in product.description and "$" in product.description:
+        # Simplistic variant parser: "1 Día | 1.00, 7 Días | 4.50"
+        try:
+            for part in product.description.split(","):
+                v_name, v_price = part.split("|")
+                variants.append((v_name.strip(), f"${money(v_price.strip()):.2f}"))
+        except (ValueError, InvalidOperation):
+            variants = []
+
+    can_buy = product.is_active and product.price > 0 and product.stock > 0
+
+    if variants:
+        text = f"📦 <b>{product.name}</b> 📥\n\n⏱️ <b>SELECCIONA LA DURACIÓN DE TU LICENCIA:</b>"
+    else:
+        stock = "Agotado" if product.stock <= 0 else str(product.stock)
+        display_status = "Disponible" if can_buy else ("Agotado" if product.is_active and product.price > 0 else "Pendiente de configuración")
+        text = f"📦 <b>{product.name}</b>\n\n📝 {product.description or 'Sin descripción.'}\n💵 Precio: <b>{m(product.price)}</b>\n📊 Stock: {stock}\n🟢 Estado: {display_status}"
+
+    markup = product_detail(product.id, f"cat:{product.category}", can_buy, variants)
     if product.image_file_id:
         try:
             await callback.message.delete()
@@ -825,13 +840,25 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
     user = await event_user(callback, session, current_user)
     if not user:
         return
-    product_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    product_id = int(parts[1])
+    variant = parts[2] if len(parts) > 2 else "default"
     try:
         user = (await session.execute(select(User).where(User.telegram_id == user.telegram_id).with_for_update())).scalar_one()
         product = (await session.execute(select(Product).where(Product.id == product_id, Product.is_active.is_(True)).with_for_update())).scalar_one_or_none()
         if not product or product.stock <= 0:
             await callback.message.edit_text("❌ El producto ya no está disponible.", reply_markup=nav())
             return
+
+        price = product.price
+        if variant != "default" and product.description and "|" in product.description:
+            try:
+                for part in product.description.split(","):
+                    if part.split("|")[0].strip() == variant:
+                        price = money(part.split("|")[1].strip())
+                        break
+            except (ValueError, InvalidOperation):
+                pass
         data = await state.get_data() if state else {}
         coupon_code = data.get("coupon_code")
         coupon = None
@@ -840,8 +867,8 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
             coupon = (await session.execute(select(Coupon).where(Coupon.code == coupon_code).with_for_update())).scalar_one_or_none()
             if coupon and (await session.execute(select(CouponRedemption).where(CouponRedemption.coupon_id == coupon.id, CouponRedemption.user_id == user.id))).scalar_one_or_none():
                 coupon = None
-            discount = coupon_discount(coupon, money(product.price), user)
-        total = money(product.price) - discount
+            discount = coupon_discount(coupon, money(price), user)
+        total = money(price) - discount
         if user.balance < total:
             await callback.message.edit_text(f"❌ <b>SALDO INSUFICIENTE</b>\n\nSaldo actual: {m(user.balance)}\nPrecio: {m(total)}\nFalta: {m(total - money(user.balance))}", reply_markup=nav())
             return
@@ -851,10 +878,12 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         user.purchases_count += 1
         product.stock -= 1
         product.sales_count += 1
-        purchase = Purchase(order_id=order_id, user_id=user.id, product_id=product.id, product_name=product.name, price=total, discount=discount, coupon_code=coupon.code if coupon else None, delivery_data=product.delivery_data, delivered_at=utcnow() if product.delivery_data else None)
+        variant_text = f" ({variant})" if variant != "default" else ""
+        product_name_full = f"{product.name}{variant_text}"
+        purchase = Purchase(order_id=order_id, user_id=user.id, product_id=product.id, product_name=product_name_full, price=total, discount=discount, coupon_code=coupon.code if coupon else None, delivery_data=product.delivery_data, delivered_at=utcnow() if product.delivery_data else None)
         session.add(purchase)
         await session.flush()
-        session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.PURCHASE, amount=-total, balance_after=user.balance, reference=order_id, note=product.name))
+        session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.PURCHASE, amount=-total, balance_after=user.balance, reference=order_id, note=product_name_full))
         if coupon:
             coupon.used_count += 1
             session.add(CouponRedemption(coupon_id=coupon.id, user_id=user.id, purchase_id=purchase.id))
@@ -863,9 +892,9 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         if state:
             await state.clear()
         delivery = f"\n\n📦 <b>DATOS DE ENTREGA:</b>\n<code>{product.delivery_data}</code>" if product.delivery_data else "\n\n📦 Entrega: el administrador procesará tu pedido."
-        text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product.name}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {m(user.balance)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
+        text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {m(user.balance)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
         await callback.message.edit_text(text, reply_markup=nav())
-        await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product.name}\n💵 {m(total)}\n🧾 {order_id}")
+        await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product_name_full}\n💵 {m(total)}\n🧾 {order_id}")
     except Exception:
         await session.rollback()
         logger.exception("purchase processing failed")
@@ -1492,7 +1521,7 @@ async def main() -> None:
     dp.include_router(router)
 
     logger.info("⚡ LXZ STORE BEST iniciado correctamente en modo producción. version=%s", settings.APP_VERSION)
-    
+
     try:
         # 5. Ponemos al bot a escuchar; Railway puede tener cortes transitorios.
         while True:
