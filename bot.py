@@ -224,7 +224,7 @@ class TopupRequest(Base):
     __tablename__ = "topup_requests"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
-    method: Mapped[str] = mapped_column(String(40), nullable=False)
+    method: Mapped[str] = mapped_column(String(160), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     proof_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
     proof_type: Mapped[str] = mapped_column(String(20), default="photo", nullable=False)
@@ -383,6 +383,23 @@ def peru_currency_methods() -> InlineKeyboardMarkup:
     ])
 
 
+def crypto_assets() -> InlineKeyboardMarkup:
+    return kb([
+        [("₮ USDT", "topup:asset:usdt", None), ("$ USDC", "topup:asset:usdc", None)],
+        [("👤 Recarga asistida", "topup:assisted", None)],
+        [("📍 Elegir otro país", "menu:balance", None)],
+        [("❌ Cancelar", "menu:home", None)],
+    ])
+
+
+def crypto_networks(asset: str) -> InlineKeyboardMarkup:
+    rows = [[(f"🌐 {config['label']}", f"topup:network:{network}", None)] for network, config in CRYPTO_NETWORK_CONFIG.items()]
+    rows.append([("⬅️ Elegir USDC/USDT", "topup:crypto_assets", None)])
+    rows.append([("📍 Elegir otro país", "menu:balance", None)])
+    rows.append([("❌ Cancelar", "menu:home", None)])
+    return kb(rows)
+
+
 def peru_payment_methods() -> InlineKeyboardMarkup:
     return kb([
         [("📱 Yape", "topup:peru_method:yape", None), ("📱 Plin", "topup:peru_method:plin", None)],
@@ -511,6 +528,36 @@ PERU_PAYMENT_CONFIG = {
     "rate": Decimal("3.40"),
     "minimum": Decimal("3.40"),
     "maximum": Decimal("30000.00"),
+}
+CRYPTO_NETWORK_CONFIG = {
+    "ethereum": {
+        "label": "Ethereum (ETH)",
+        "network": "Ethereum · Red nativa de Ethereum",
+        "address": "0x7CEEC2E1c74500573884C9747CB6B12e0d6a2054",
+        "fee": "Costo de red de Ethereum",
+        "instruction": "Envía únicamente USDC/USDT en la red Ethereum a esta dirección. De lo contrario, podrías perder tus fondos.",
+    },
+    "tron": {
+        "label": "Tron (TRX)",
+        "network": "Tron · Red nativa para transferencias TRON",
+        "address": "TFMLUcX41GCvdeAd2raKkDnKXwabfsC7v",
+        "fee": "Costo de red: 5 USDC/USDT",
+        "instruction": "Envía únicamente USDC/USDT en la red Tron a esta dirección. De lo contrario, podrías perder tus fondos.",
+    },
+    "bsc": {
+        "label": "BNB Smart Chain (BEP20)",
+        "network": "BNB Smart Chain (BEP20) · Red nativa de Binance",
+        "address": "0x7CEEC2E1c74500573884C9747CB6B12e0d6a2054",
+        "fee": "Costo de red de Binance Smart Chain",
+        "instruction": "Envía únicamente USDC/USDT en la red BNB Smart Chain (BEP20) a esta dirección. No envíes desde la red OPBNB.",
+    },
+    "polygon": {
+        "label": "Polygon POS",
+        "network": "Polygon POS · Red nativa de MATIC",
+        "address": "0x7CEEC2E1c74500573884C9747CB6B12e0d6a2054",
+        "fee": "Costo de red de Polygon",
+        "instruction": "Envía únicamente USDC/USDT en la red Polygon POS a esta dirección. De lo contrario, podrías perder tus fondos.",
+    },
 }
 
 
@@ -1205,7 +1252,47 @@ async def topup_country(callback: CallbackQuery, state: FSMContext):
     if code == "pe":
         await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona la moneda que recibirás:", peru_currency_methods())
     else:
-        await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el método de pago para continuar:", payment_methods())
+        await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el activo digital que recibirás:", crypto_assets())
+
+
+@router.callback_query(F.data == "topup:crypto_assets")
+async def topup_crypto_assets(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("country_name") or data.get("country") == "pe":
+        await callback.answer("Selecciona primero un país internacional.", show_alert=True)
+        return
+    await edit_or_answer(callback, "💱 <b>ACTIVO DIGITAL</b>\n\nSelecciona USDC o USDT:", crypto_assets())
+
+
+@router.callback_query(F.data.startswith("topup:asset:"))
+async def topup_asset(callback: CallbackQuery, state: FSMContext):
+    asset = callback.data.rsplit(":", 1)[1].upper()
+    if asset not in {"USDC", "USDT"}:
+        await callback.answer("Activo no disponible.", show_alert=True)
+        return
+    data = await state.get_data()
+    if not data.get("country_name") or data.get("country") == "pe":
+        await callback.answer("Selecciona primero un país internacional.", show_alert=True)
+        return
+    await state.update_data(asset=asset, currency=asset, rate="1.00", minimum="1.00", maximum="10000.00")
+    await edit_or_answer(callback, f"💱 <b>{asset}</b>\n\nSelecciona la red por la que enviarás el pago:", crypto_networks(asset))
+
+
+@router.callback_query(F.data.startswith("topup:network:"))
+async def topup_network(callback: CallbackQuery, state: FSMContext):
+    network = callback.data.rsplit(":", 1)[1]
+    config = CRYPTO_NETWORK_CONFIG.get(network)
+    data = await state.get_data()
+    asset = data.get("asset", "USDT")
+    if not config or asset not in {"USDC", "USDT"}:
+        await callback.answer("Red o activo no disponible.", show_alert=True)
+        return
+    await state.set_state(TopupFlow.amount)
+    await state.update_data(method=f"{asset} · {config['label']}", currency=asset, rate="1.00", minimum="1.00", maximum="10000.00", network=config["network"], wallet=config["address"])
+    details = (f"🌐 Red: <b>{config['network']}</b>\n"
+               f"📥 Dirección: <code>{config['address']}</code>\n"
+               f"💸 Comisión: {config['fee']}")
+    await edit_or_answer(callback, f"💱 <b>RECIBIR {asset}</b>\n\n{details}\n\n⚠️ {config['instruction']}\n\n📥 Mínimo: 1 {asset} · Máximo: 10,000 {asset}\n⏱️ Tiempo estimado: En minutos\n\nSelecciona el monto a enviar:", topup_amounts(asset, Decimal(1)))
 
 
 @router.callback_query(F.data == "topup:currency:pen")
@@ -1321,6 +1408,9 @@ async def create_topup(message: Message, state: FSMContext, session: AsyncSessio
     data = await state.get_data()
     country_name = data.get("country_name", "País no indicado")
     method = data.get("method", "Método no indicado")
+    network = data.get("network")
+    if network:
+        method = f"{method} · {network}"
     currency = data.get("currency", "USD")
     usd_amount = money(data["amount"])
     source_amount = money(data.get("source_amount", data["amount"]))
