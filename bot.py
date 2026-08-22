@@ -321,11 +321,12 @@ def product_list(items, page: int, pages: int, category: str) -> InlineKeyboardM
     return kb(rows)
 
 
-def product_detail(product_id: int, back: str) -> InlineKeyboardMarkup:
-    return kb([
-        [("🛒 Comprar", f"buy:{product_id}", None)],
-        [("⬅️ Atrás", back, None), ("🏠 Inicio", "menu:home", None)],
-    ])
+def product_detail(product_id: int, back: str, can_buy: bool = True) -> InlineKeyboardMarkup:
+    rows = []
+    if can_buy:
+        rows.append([("🛒 Comprar", f"buy:{product_id}", None)])
+    rows.append([("⬅️ Atrás", back, None), ("🏠 Inicio", "menu:home", None)])
+    return kb(rows)
 
 
 def confirm(action: str, cancel: str = "menu:home") -> InlineKeyboardMarkup:
@@ -672,13 +673,13 @@ async def menu_home(callback: CallbackQuery, session: AsyncSession, current_user
 
 @router.callback_query(F.data == "menu:catalog")
 async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
-    db_categories = (await session.execute(select(Product.category).where(Product.is_active.is_(True)).distinct())).scalars().all()
+    db_categories = (await session.execute(select(Product.category).distinct())).scalars().all()
     values = list(dict.fromkeys(CATEGORIES + [x for x in db_categories if x not in CATEGORIES]))
     await edit_or_answer(callback, "🛍️ <b>CATÁLOGO</b>\n\nSelecciona una categoría:", categories(values))
 
 
 async def render_products(callback: CallbackQuery, session: AsyncSession, category: str, page: int):
-    query = select(Product).where(Product.is_active.is_(True), Product.category == category).order_by(Product.id.desc())
+    query = select(Product).where(Product.category == category).order_by(Product.id.desc())
     all_items = (await session.execute(query)).scalars().all()
     pages = max(1, math.ceil(len(all_items) / PAGE_SIZE))
     page = max(0, min(page, pages - 1))
@@ -689,7 +690,8 @@ async def render_products(callback: CallbackQuery, session: AsyncSession, catego
         lines = [f"📦 <b>{category}</b> · Página {page + 1}/{pages}", ""]
         for p in items:
             stock = "Agotado" if p.stock <= 0 else str(p.stock)
-            lines.append(f"• <b>{p.name}</b> — {m(p.price)} · Stock: {stock}")
+            status = "Disponible" if p.is_active and p.price > 0 and p.stock > 0 else "Pendiente de configuración"
+            lines.append(f"• <b>{p.name}</b> — {m(p.price)} · Stock: {stock} · {status}")
         text = "\n".join(lines)
     await edit_or_answer(callback, text, product_list(items, page, pages, category))
 
@@ -707,13 +709,14 @@ async def catalog_page(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.regexp(r"^product:\d+$"))
 async def product_info(callback: CallbackQuery, session: AsyncSession):
-    product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[1]), Product.is_active.is_(True)))).scalar_one_or_none()
+    product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[1])))).scalar_one_or_none()
     if not product:
         await callback.answer("Producto no disponible.", show_alert=True)
         return
     stock = "Agotado" if product.stock <= 0 else str(product.stock)
-    text = f"📦 <b>{product.name}</b>\n\n📝 {product.description or 'Sin descripción.'}\n💵 Precio: <b>{m(product.price)}</b>\n📊 Stock: {stock}\n🟢 Estado: {'Disponible' if product.stock > 0 else 'Agotado'}"
-    markup = product_detail(product.id, f"cat:{product.category}")
+    display_status = "Disponible" if product.is_active and product.price > 0 and product.stock > 0 else ("Agotado" if product.is_active and product.price > 0 else "Pendiente de configuración")
+    text = f"📦 <b>{product.name}</b>\n\n📝 {product.description or 'Sin descripción.'}\n💵 Precio: <b>{m(product.price)}</b>\n📊 Stock: {stock}\n🟢 Estado: {display_status}"
+    markup = product_detail(product.id, f"cat:{product.category}", product.is_active and product.price > 0 and product.stock > 0)
     if product.image_file_id and Path(product.image_file_id).is_file():
         try:
             await callback.message.delete()
