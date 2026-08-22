@@ -695,7 +695,7 @@ async def cmd_broadcast(message: Message, state: FSMContext, session: AsyncSessi
 
 
 @router.message(Command("creditos"))
-async def cmd_creditos(message: Message, session: AsyncSession, current_user: User | None = None):
+async def cmd_creditos(message: Message, bot: Bot, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not is_admin(actor):
         await message.answer("❌ Permisos insuficientes.")
@@ -721,7 +721,12 @@ async def cmd_creditos(message: Message, session: AsyncSession, current_user: Us
     session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT, amount=amount, balance_after=target.balance, reference=str(actor.telegram_id), note="/creditos"))
     await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"+{amount}")
     await session.commit()
-    await message.answer(f"✅ Créditos agregados.\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: {m(amount)}\n💰 Nuevo saldo: {m(target.balance)}")
+    await message.answer(f"✅ <b>CRÉDITOS ENTREGADOS</b>\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: {m(amount)}\n💰 Nuevo saldo: {m(target.balance)}")
+    if target.telegram_id != actor.telegram_id:
+        try:
+            await bot.send_message(target.telegram_id, f"💰 <b>CRÉDITOS RECIBIDOS</b>\n\nSe agregaron: <b>+{m(amount)}</b>\nSaldo actual: <b>{m(target.balance)}</b>")
+        except (TelegramForbiddenError, TelegramBadRequest):
+            logger.warning("No se pudo notificar al usuario %s sobre sus créditos.", target.telegram_id)
 
 
 @router.callback_query(F.data == "menu:home")
@@ -1184,8 +1189,11 @@ async def admin_balance_confirm(callback: CallbackQuery, state: FSMContext, bot:
     target.balance = money(target.balance) + sign * amount
     session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT if sign > 0 else BalanceTransactionType.DEBIT, amount=sign * amount, balance_after=target.balance, reference=str(actor.telegram_id)))
     await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"{sign * amount}"); await session.commit(); await state.clear()
-    await bot.send_message(target.telegram_id, f"💰 <b>{'CRÉDITOS AGREGADOS' if sign > 0 else 'CRÉDITOS DESCONTADOS'}</b>\n\nMovimiento: {'+' if sign > 0 else '-'}{m(amount)}\nNuevo saldo: {m(target.balance)}")
-    await edit_or_answer(callback, "✅ Operación completada.", nav(True, "admin:home"))
+    try:
+        await bot.send_message(target.telegram_id, f"💰 <b>{'CRÉDITOS RECIBIDOS' if sign > 0 else 'CRÉDITOS DESCONTADOS'}</b>\n\nMovimiento: {'+' if sign > 0 else '-'}{m(amount)}\nNuevo saldo: {m(target.balance)}")
+    except (TelegramForbiddenError, TelegramBadRequest):
+        logger.warning("No se pudo notificar al usuario %s sobre el cambio de saldo.", target.telegram_id)
+    await edit_or_answer(callback, f"✅ <b>{'CRÉDITOS ENTREGADOS' if sign > 0 else 'CRÉDITOS DESCONTADOS'}</b>.\n\nNuevo saldo: {m(target.balance)}", nav(True, "admin:home"))
 
 
 @router.callback_query(F.data.startswith("admin:premium:"))
