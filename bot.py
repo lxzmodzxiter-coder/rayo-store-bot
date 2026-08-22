@@ -9,6 +9,7 @@ import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
@@ -21,6 +22,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery,
+    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -387,6 +389,22 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = max(1, settings.PAGE_SIZE)
 CATEGORIES = ["Android", "iOS", "PC", "Otros"]
 CATEGORY_LABELS = {"Android": "🤖 Android", "iOS": "🍎 iOS", "PC": "💻 PC", "Otros": "🌐 Otros"}
+IMAGE_BY_PRODUCT = {
+    "DRIP CLIENT": "assets/drip_client_android.jpg",
+    "HG CHEATS": "assets/hg_cheats.jpg",
+    "PROXY MENÚ": "assets/proxy_menu_hg_cheats.jpg",
+    "PROYECTO HOLOGRAMA VIP": "assets/proyecto_holograma_vip.jpg",
+    "PROXY POTATSO": "assets/proxy_potatso_ios.jpg",
+    "E-SIGN": "assets/esign.jpg",
+    "FLOURITE": "assets/flourite.jpg",
+    "CUBAN MODS": "assets/cuban_mods.jpg",
+}
+
+
+def image_for_product(name: str) -> str | None:
+    return IMAGE_BY_PRODUCT.get(name.strip().upper())
+
+
 INITIAL_PRODUCTS = {
     "Android": [
         "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
@@ -554,8 +572,11 @@ async def seed_initial_products(session: AsyncSession) -> None:
     for category, names in INITIAL_PRODUCTS.items():
         for name in names:
             existing = (await session.execute(select(Product).where(Product.category == category, Product.name == name))).scalar_one_or_none()
+            image_path = image_for_product(name)
             if not existing:
-                session.add(Product(category=category, name=name, description="Producto agregado; configura precio, stock y entrega desde /agregas.", price=Decimal("0.00"), stock=0, is_active=False))
+                session.add(Product(category=category, name=name, description="Producto agregado; configura precio, stock y entrega desde /agregas.", price=Decimal("0.00"), stock=0, image_file_id=image_path, is_active=False))
+            elif image_path and not existing.image_file_id:
+                existing.image_file_id = image_path
     await session.commit()
 
 
@@ -687,7 +708,16 @@ async def product_info(callback: CallbackQuery, session: AsyncSession):
         return
     stock = "Agotado" if product.stock <= 0 else str(product.stock)
     text = f"📦 <b>{product.name}</b>\n\n📝 {product.description or 'Sin descripción.'}\n💵 Precio: <b>{m(product.price)}</b>\n📊 Stock: {stock}\n🟢 Estado: {'Disponible' if product.stock > 0 else 'Agotado'}"
-    await edit_or_answer(callback, text, product_detail(product.id, f"cat:{product.category}"))
+    markup = product_detail(product.id, f"cat:{product.category}")
+    if product.image_file_id and Path(product.image_file_id).is_file():
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer_photo(FSInputFile(product.image_file_id), caption=text, reply_markup=markup)
+        await callback.answer()
+    else:
+        await edit_or_answer(callback, text, markup)
 
 
 @router.callback_query(F.data.startswith("buy:"))
@@ -1128,7 +1158,7 @@ async def product_stock(message: Message, state: FSMContext):
 async def product_delivery(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not is_admin(actor): await state.clear(); return
-    data = await state.get_data(); product = Product(name=data["name"], category=data["category"], description=data["description"], price=money(data["price"]), stock=int(data["stock"]), delivery_data=None if message.text.strip() == "-" else message.text.strip())
+    data = await state.get_data();     product = Product(name=data["name"], category=data["category"], description=data["description"], price=money(data["price"]), stock=int(data["stock"]), image_file_id=image_for_product(data["name"]), delivery_data=None if message.text.strip() == "-" else message.text.strip())
     session.add(product); await log_event(session, actor.telegram_id, "product_create", data["name"], "created"); await session.commit(); await state.clear(); await message.answer("✅ Producto creado correctamente.", reply_markup=nav(True, "admin:products"))
 
 
