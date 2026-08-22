@@ -1,21 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from config import settings  # Importa directamente del archivo config.py que acabas de crear
 
-# Creamos el motor de conexión a la base de datos
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_size=20,       # Soporta 20 conexiones simultáneas
-    max_overflow=10,    # Y 10 extra si hay picos de usuarios
-    pool_pre_ping=True  # Verifica que la conexión no se haya caído
-)
+from config import settings
 
-# Creamos el generador de sesiones
-async_session_maker = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autocommit=False,
-    autoflush=False
-)
+engine_kwargs = {"echo": False, "pool_pre_ping": True}
+if settings.DATABASE_URL.startswith("sqlite"):
+    engine_kwargs.pop("pool_pre_ping", None)
+else:
+    engine_kwargs.update(pool_size=20, max_overflow=10)
 
+engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
+async_session_maker = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)

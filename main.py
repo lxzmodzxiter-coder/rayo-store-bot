@@ -1,18 +1,19 @@
 import asyncio
 import logging
 import sys
+
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
+import start
+from auth import AuthMiddleware
+
 # Importamos nuestros propios archivos y modelos
 from config import settings
-from database import DatabaseMiddleware, engine, Base
-from auth import AuthMiddleware
-import user  # <--- Importa user.py para que SQLAlchemy reconozca la tabla de usuarios
-import start
+from database import Base, DatabaseMiddleware, engine
 
 # Configuración para ver errores y mensajes en la consola de Railway
 logging.basicConfig(
@@ -54,7 +55,8 @@ async def main() -> None:
     finally:
         # Apagado seguro si se reinicia el servidor
         await bot.session.close()
-        await redis_client.close()
+        await redis_client.aclose()
+        await engine.dispose()
 
 if __name__ == "__main__":
     try:
