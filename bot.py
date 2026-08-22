@@ -358,9 +358,10 @@ def confirm(action: str, cancel: str = "menu:home") -> InlineKeyboardMarkup:
 
 def topup_countries() -> InlineKeyboardMarkup:
     rows = []
-    for index in range(0, len(TOPUP_COUNTRIES), 2):
-        row = [(label, f"topup:country:{code}", None) for code, label in TOPUP_COUNTRIES[index:index + 2]]
-        rows.append(row)
+    for region, countries in TOPUP_REGIONS.items():
+        rows.append([(region, "topup:noop", None)])
+        for index in range(0, len(countries), 2):
+            rows.append([(label, f"topup:country:{code}", None) for code, label in countries[index:index + 2]])
     rows.append([("👤 Contactar para Recarga", "topup:assisted", None)])
     rows.append([("❌ Cancelar", "menu:home", None)])
     return kb(rows)
@@ -453,14 +454,27 @@ def image_for_product(name: str) -> str | None:
     return IMAGE_BY_PRODUCT.get(name.strip().upper())
 
 
-TOPUP_COUNTRIES = [
-    ("mx", "🇲🇽 México"), ("ar", "🇦🇷 Argentina"), ("bo", "🇧🇴 Bolivia"),
-    ("br", "🇧🇷 Brasil"), ("cl", "🇨🇱 Chile"), ("co", "🇨🇴 Colombia"),
-    ("cr", "🇨🇷 Costa Rica"), ("ec", "🇪🇨 Ecuador"), ("es", "🇪🇸 España"),
-    ("us", "🇺🇸 EE.UU"), ("gt", "🇬🇹 Guatemala"), ("hn", "🇭🇳 Honduras"),
-    ("ni", "🇳🇮 Nicaragua"), ("pa", "🇵🇦 Panamá"), ("py", "🇵🇾 Paraguay"),
-    ("pe", "🇵🇪 Perú"), ("do", "🇩🇴 RD"), ("ve", "🇻🇪 Venezuela"),
-]
+TOPUP_REGIONS = {
+    "🌎 AMÉRICA Y EL CARIBE": [
+        ("ar", "🇦🇷 Argentina"), ("bo", "🇧🇴 Bolivia"), ("br", "🇧🇷 Brasil"),
+        ("cl", "🇨🇱 Chile"), ("ec", "🇪🇨 Ecuador"), ("us", "🇺🇸 Estados Unidos"),
+        ("mx", "🇲🇽 México"), ("py", "🇵🇾 Paraguay"), ("pe", "🇵🇪 Perú"),
+    ],
+    "🌍 EUROPA": [
+        ("de", "🇩🇪 Alemania"), ("at", "🇦🇹 Austria"), ("be", "🇧🇪 Bélgica"),
+        ("bg", "🇧🇬 Bulgaria"), ("cy", "🇨🇾 Chipre"), ("hr", "🇭🇷 Croacia"),
+        ("dk", "🇩🇰 Dinamarca"), ("sk", "🇸🇰 Eslovaquia"), ("si", "🇸🇮 Eslovenia"),
+        ("es", "🇪🇸 España"), ("ee", "🇪🇪 Estonia"), ("fi", "🇫🇮 Finlandia"),
+        ("fr", "🇫🇷 Francia"), ("gr", "🇬🇷 Grecia"), ("hu", "🇭🇺 Hungría"),
+        ("ie", "🇮🇪 Irlanda"), ("is", "🇮🇸 Islandia"), ("it", "🇮🇹 Italia"),
+        ("lv", "🇱🇻 Letonia"), ("li", "🇱🇮 Liechtenstein"), ("lt", "🇱🇹 Lituania"),
+        ("lu", "🇱🇺 Luxemburgo"), ("mt", "🇲🇹 Malta"), ("no", "🇳🇴 Noruega"),
+        ("nl", "🇳🇱 Países Bajos"), ("pl", "🇵🇱 Polonia"), ("pt", "🇵🇹 Portugal"),
+        ("gb", "🇬🇧 Reino Unido"), ("cz", "🇨🇿 República Checa"),
+        ("ro", "🇷🇴 Rumanía"), ("se", "🇸🇪 Suecia"), ("ch", "🇨🇭 Suiza"),
+    ],
+}
+TOPUP_COUNTRIES = [country for countries in TOPUP_REGIONS.values() for country in countries]
 TOPUP_AMOUNTS = (5, 10, 15, 20, 30, 50, 100)
 TOPUP_METHOD_LABELS = {
     "paypal": "PayPal",
@@ -1137,6 +1151,11 @@ async def menu_balance(callback: CallbackQuery, session: AsyncSession, current_u
             await callback.answer()
         else:
             await edit_or_answer(callback, text, markup)
+
+
+@router.callback_query(F.data == "topup:noop")
+async def topup_noop(callback: CallbackQuery):
+    await callback.answer()
 
 
 @router.callback_query(F.data == "topup:assisted")
