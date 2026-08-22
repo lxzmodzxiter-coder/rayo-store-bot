@@ -554,8 +554,16 @@ async def edit_or_answer(callback: CallbackQuery, text: str, markup=None) -> Non
     try:
         await callback.message.edit_text(text, reply_markup=markup)
     except TelegramBadRequest as exc:
-        if "message is not modified" not in str(exc).lower():
-            await callback.message.answer(text, reply_markup=markup)
+        if "message is not modified" in str(exc).lower():
+            await callback.answer()
+            return
+        # Una foto no puede convertirse en texto mediante edit_text. En ese caso
+        # eliminamos la tarjeta anterior para no dejar mensajes duplicados.
+        try:
+            await callback.message.delete()
+        except TelegramBadRequest:
+            pass
+        await callback.message.answer(text, reply_markup=markup)
     await callback.answer()
 
 
