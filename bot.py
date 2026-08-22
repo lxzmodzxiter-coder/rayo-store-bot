@@ -1332,7 +1332,7 @@ async def product_edit_value(message: Message, state: FSMContext, session: Async
     await session.commit(); await state.clear(); await message.answer("✅ Producto actualizado.", reply_markup=nav(True, "admin:products"))
 
 
-@router.callback_query(F.data.startswith("admin:product:"))
+@router.callback_query(F.data.regexp(r"^admin:product:\d+$"))
 async def admin_product_detail(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     if not await check_admin(callback, session, current_user): return
     raw = callback.data.split(":")[2]
@@ -1353,8 +1353,14 @@ async def product_toggle(callback: CallbackQuery, session: AsyncSession, current
     actor = await check_admin(callback, session, current_user)
     if not actor: return
     product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[3])).with_for_update())).scalar_one_or_none()
-    if product: product.is_active = not product.is_active; await log_event(session, actor.telegram_id, "product_toggle", str(product.id), str(product.is_active)); await session.commit()
-    await edit_or_answer(callback, "✅ Estado del producto actualizado.", nav(True, "admin:products"))
+    if not product:
+        await callback.answer("Producto inexistente.", show_alert=True)
+        return
+    product.is_active = not product.is_active
+    new_state = "activado" if product.is_active else "desactivado"
+    await log_event(session, actor.telegram_id, "product_toggle", str(product.id), str(product.is_active))
+    await session.commit()
+    await edit_or_answer(callback, f"✅ Producto {new_state} correctamente.\n\n📦 {product.name}\n💰 Precio: {m(product.price)}\n📊 Stock: {product.stock}", nav(True, "admin:products"))
 
 
 @router.callback_query(F.data.startswith("admin:product:delete:"))
