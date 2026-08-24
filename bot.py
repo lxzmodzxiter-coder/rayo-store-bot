@@ -564,12 +564,41 @@ CRYPTO_NETWORK_CONFIG = {
 INITIAL_PRODUCTS = {
     "Android": [
         "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
-        "HG CHEATS", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP",
+        "HG CHEATS", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP", "PATO REGEDIT", "BALA MOD ANDROID",
+        "PROXY HG CHEATS", "MIGUIL MONITE LITE", "MIGUIL MONITE PRO",
     ],
-    "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE"],
+    "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE", "MONITE CHEATS IPHONE"],
     "PC": ["BYPASS UID", "BR MODS PC", "AIMKILL PC"],
     "Otros": ["NUMEROS VIRTUALES (Para WhatsApp)", "PLATAFORMA STREAMING"],
 }
+
+# Prices supplied by the owner. The first variant is also the base display price.
+PRICE_CATALOG = {
+    "DRIP CLIENT": [("1 Día", "3"), ("3 Días", "7"), ("7 Días", "10"), ("15 Días", "12"), ("30 Días", "15")],
+    "PRÓXY ANDROID": [("1 Día", "3"), ("3 Días", "5"), ("7 Días", "7"), ("30 Días", "15")],
+    "PATO REGEDIT": [("1 Día", "3"), ("3 Días", "7")],
+    "BALA MOD ANDROID": [("1 Hora", "1"), ("3 Horas", "1.80"), ("6 Horas", "2.80"), ("12 Horas", "3.80"), ("1 Día", "4.80"), ("2 Días", "6"), ("3 Días", "9"), ("7 Días", "20")],
+    "PROXY HG CHEATS": [("1 Día", "3"), ("7 Días", "7"), ("10 Días", "10"), ("30 Días", "15")],
+    "PROXY POTATSO": [("1 Día", "5"), ("7 Días", "11"), ("30 Días", "20")],
+    "PATO TEAM": [("1 Día", "3"), ("3 Días", "7"), ("7 Días", "10"), ("15 Días", "15"), ("30 Días", "18")],
+    "AIMKILL PC": [("1 Día", "3"), ("7 Días", "10"), ("30 Días", "18")],
+    "BR MODS PC": [("10 Días", "10"), ("30 Días", "20")],
+    "BR MODS MÓVIL - ROOT": [("1 Día", "3"), ("7 Días", "9"), ("30 Días", "20")],
+    "HG CHEATS": [("1 Día", "2.50"), ("7 Días", "7"), ("10 Días", "10"), ("30 Días", "15")],
+    "CUBAN MODS": [("1 Día", "2.50"), ("7 Días", "7"), ("15 Días", "10"), ("30 Días", "17")],
+    "MIGUIL MONITE LITE": [("1 Día", "3"), ("7 Días", "7"), ("30 Días", "12")],
+    "MIGUIL MONITE PRO": [("1 Día", "5"), ("7 Días", "10"), ("30 Días", "20")],
+    "FLOURITE": [("1 Día", "5"), ("1 Día (con certificado)", "13"), ("7 Días", "20"), ("7 Días (con certificado)", "28"), ("30 Días", "30"), ("30 Días (con certificado)", "38")],
+    "MONITE CHEATS IPHONE": [("1 Día", "5"), ("7 Días", "13"), ("30 Días", "25")],
+    "CERTIFICADO IPHONE": [("30 Días", "7")],
+}
+PRICE_CATEGORIES = {
+    "PATO REGEDIT": "Android", "BALA MOD ANDROID": "Android", "PROXY HG CHEATS": "Android",
+    "MIGUIL MONITE LITE": "Android", "MIGUIL MONITE PRO": "Android", "MONITE CHEATS IPHONE": "iOS",
+}
+
+def price_variants_text(variants: list[tuple[str, str]]) -> str:
+    return ", ".join(f"{name} | {price}" for name, price in variants)
 
 
 class ProductSearch(StatesGroup):
@@ -793,10 +822,16 @@ async def seed_initial_products(session: AsyncSession) -> None:
         for name in names:
             existing = (await session.execute(select(Product).where(Product.name == name))).scalar_one_or_none()
             image_path = image_for_product(name)
+            price_variants = PRICE_CATALOG.get(name)
+            description = price_variants_text(price_variants) if price_variants else "Producto agregado; configura precio, stock y entrega desde /agregas."
+            base_price = money(price_variants[0][1]) if price_variants else Decimal("0.00")
             if not existing:
-                session.add(Product(category=category, name=name, description="Producto agregado; configura precio, stock y entrega desde /agregas.", price=Decimal("0.00"), stock=0, image_file_id=image_path, is_active=False))
+                session.add(Product(category=category, name=name, description=description, price=base_price, stock=0, image_file_id=image_path, is_active=False))
             else:
                 existing.category = category
+                if price_variants:
+                    existing.description = description
+                    existing.price = base_price
                 if image_path and not existing.image_file_id:
                     existing.image_file_id = image_path
     await session.commit()
