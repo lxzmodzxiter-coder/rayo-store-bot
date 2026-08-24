@@ -35,7 +35,7 @@ from aiogram.types import (
     Message,
     TelegramObject,
 )
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAIError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import (
     BigInteger,
@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     OPENAI_BASE_URL: str = ""
     OPENAI_MODEL: str = "gpt-5-mini"
+    OPENAI_FALLBACK_MODEL: str = "gpt-4o-mini"
     AI_COOLDOWN_SECONDS: float = 2.0
     YAPE_NUMBER: str = ""
     PLIN_NUMBER: str = ""
@@ -733,9 +734,9 @@ async def client_ai_answer(message: Message, bot: Bot, session: AsyncSession, us
         await message.answer(f"🤖 El asistente está temporalmente fuera de servicio.\n\n📞 Soporte: {settings.SUPPORT_URL}")
         return
     if _ai_client is None:
-        client_options = {"api_key": settings.OPENAI_API_KEY}
+        client_options = {"api_key": settings.OPENAI_API_KEY.strip().strip('"').strip("'")}
         if settings.OPENAI_BASE_URL:
-            client_options["base_url"] = settings.OPENAI_BASE_URL
+            client_options["base_url"] = settings.OPENAI_BASE_URL.rstrip("/")
         _ai_client = AsyncOpenAI(**client_options)
     context = await ai_catalog_context(session)
     system_prompt = ("Eres el asistente de atención al cliente de LXZ STORE. Responde en español, con claridad y máximo 800 caracteres. "
@@ -746,21 +747,32 @@ async def client_ai_answer(message: Message, bot: Bot, session: AsyncSession, us
                      "Guía: el cliente puede abrir el catálogo para consultar productos; para recargar debe elegir país y monto, "
                      "en Perú verá PEN con Yape, Plin, Ligo o CCI, y en otros países puede ver USDC/USDT y redes disponibles. "
                      "Toda recarga requiere comprobante y revisión del administrador; nunca digas que un pago fue recibido o aprobado sin esa revisión.\n\nCATÁLOGO ACTUAL:\n" + context)
-    try:
-        response = await asyncio.wait_for(
-            _ai_client.chat.completions.create(
-                model=settings.OPENAI_MODEL,
-                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt[:1200]}],
-                max_completion_tokens=450,
-            ),
-            timeout=18,
-        )
-        answer = (response.choices[0].message.content or "").strip()
-        if not answer:
-            raise RuntimeError("La IA devolvió una respuesta vacía")
+    models = [settings.OPENAI_MODEL]
+    if settings.OPENAI_FALLBACK_MODEL and settings.OPENAI_FALLBACK_MODEL not in models:
+        models.append(settings.OPENAI_FALLBACK_MODEL)
+    answer = ""
+    last_error = None
+    for model in models:
+        try:
+            response = await asyncio.wait_for(
+                _ai_client.chat.completions.create(
+                    model=model,
+                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt[:1200]}],
+                    max_completion_tokens=450,
+                ),
+                timeout=18,
+            )
+            answer = (response.choices[0].message.content or "").strip()
+            if not answer:
+                raise RuntimeError("La IA devolvió una respuesta vacía")
+            break
+        except (OpenAIError, TimeoutError, ValueError, RuntimeError) as exc:
+            last_error = exc
+            logger.warning("AI model %s failed: %s", model, exc)
+    if answer:
         await message.answer("🤖 <b>Asistente LXZ</b>\n\n" + escape(answer[:3500]))
-    except Exception:
-        logger.exception("AI customer response failed")
+    else:
+        logger.error("AI customer response failed after %d model attempts: %r", len(models), last_error)
         await message.answer(f"🤖 No pude responder en este momento.\n\n📞 Soporte: {settings.SUPPORT_URL}")
 
 
@@ -1666,11 +1678,63 @@ async def admin_stats(callback: CallbackQuery, session: AsyncSession, current_us
     await edit_or_answer(callback, text, nav(True, "admin:home"))
 
 
+def user_record_text(user: User, position: int) -> str:
+    premium = f"Activo hasta {now_text(user.premium_until)}" if active_premium(user) and user.premium_until else ("Activo" if active_premium(user) else "Inactivo")
+    status = f"Baneado: {escape(user.ban_reason or 'sin motivo')}" if user.is_banned else "Activo"
+    return (f"<b>#{position} · {escape(name_of(user))}</b>\n"
+            f"🆔 ID: <code>{user.telegram_id}</code> · @{escape(user.username or '—')}\n"
+            f"🎭 Rol: {escape(user.role.value)} · Estado: {status}\n"
+            f"💰 Saldo: {m(user.balance)} · Premium: {premium}\n"
+            f"🛒 Compras: {user.purchases_count} · Gastado: {m(user.total_spent)}\n"
+            f"👥 Referidos: {user.referrals_count} · Ganado: {m(user.referral_earnings)}\n"
+            f"📅 Registro: {now_text(user.created_at)}\n"
+            f"🕘 Última actividad: {now_text(user.last_activity)}")
+
+
+async def render_users_page(callback: CallbackQuery, session: AsyncSession, page: int = 0):
+    page_size = 6
+    total = await session.scalar(select(func.count(User.id))) or 0
+    pages = max(1, math.ceil(total / page_size))
+    page = max(0, min(page, pages - 1))
+    users = (await session.execute(select(User).order_by(User.created_at.desc(), User.id.desc()).offset(page * page_size).limit(page_size))).scalars().all()
+    start = page * page_size + 1
+    body = "\n\n".join(user_record_text(user, start + index) for index, user in enumerate(users)) or "No hay usuarios registrados todavía."
+    rows = [[(f"👤 {escape(name_of(user))} · {user.telegram_id}", f"admin:user:{user.telegram_id}", None)] for user in users]
+    navigation = []
+    if page > 0:
+        navigation.append(("⬅️ Anteriores", f"admin:users:page:{page - 1}", None))
+    if page < pages - 1:
+        navigation.append(("Siguientes ➡️", f"admin:users:page:{page + 1}", None))
+    if navigation:
+        rows.append(navigation)
+    rows.append([("🔎 Buscar usuario", "admin:users:search", None)])
+    rows.append([("⚙️ Panel Admin", "admin:home", None)])
+    await edit_or_answer(callback, f"👥 <b>USUARIOS REGISTRADOS</b>\nOrden: más recientes primero · Página {page + 1}/{pages}\nTotal: {total}\n\n{body}", kb(rows))
+
+
+@router.callback_query(F.data.startswith("admin:users:page:"))
+async def admin_users_page(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
+    if not await check_admin(callback, session, current_user): return
+    try:
+        page = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer("Página inválida.", show_alert=True)
+        return
+    await render_users_page(callback, session, page)
+
+
+@router.callback_query(F.data == "admin:users:search")
+async def admin_users_search_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    if not await check_admin(callback, session, current_user): return
+    await state.set_state(UserSearch.waiting)
+    await edit_or_answer(callback, "🔎 <b>BUSCAR USUARIO</b>\n\nEscribe ID, username o nombre. /start para salir.", nav(True, "admin:users"))
+
+
 @router.callback_query(F.data == "admin:users")
 async def admin_users(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     if not await check_admin(callback, session, current_user): return
-    await state.set_state(UserSearch.waiting)
-    await edit_or_answer(callback, "👥 <b>USUARIOS</b>\n\nEscribe ID, username o nombre para buscar. /start para salir.")
+    await state.clear()
+    await render_users_page(callback, session)
 
 
 @router.message(UserSearch.waiting, F.text)
