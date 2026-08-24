@@ -592,10 +592,10 @@ CRYPTO_NETWORK_CONFIG = {
 INITIAL_PRODUCTS = {
     "Android": [
         "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
-        "HG CHEATS", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP", "PATO REGEDIT", "BALA MOD ANDROID",
+        "HG CHEATS", "PRIME HOCK APK", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP", "PATO REGEDIT", "BALA MOD ANDROID",
         "PROXY HG CHEATS",
     ],
-    "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE", "MONITE CHEATS IPHONE", "MIGUIL MONITE LITE", "MIGUIL MONITE PRO"],
+    "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE", "MONITE CHEATS IPHONE", "MONITE IOS PRO", "MONITE IOS BASIC", "GBOX CERTIFICADO", "MIGUIL MONITE LITE", "MIGUIL MONITE PRO"],
     "PC": ["BYPASS UID", "BR MODS PC", "AIMKILL PC"],
     "Otros": ["NUMEROS VIRTUALES (Para WhatsApp)", "PLATAFORMA STREAMING"],
 }
@@ -620,6 +620,8 @@ PRICE_CATALOG = {
     "MONITE CHEATS IPHONE": [("1 Día", "5"), ("7 Días", "13"), ("30 Días", "25")],
     "CERTIFICADO IPHONE": [("30 Días", "7")],
     # Valores máximos observados en las fuentes audiovisuales aportadas; no implican stock propio.
+    # El bot público revisado mostró DRIP CLIENT APK a $1.20 / $4.00 / $8.00,
+    # pero se conservan aquí los precios confirmados previamente por el Owner.
     "PROXY MENÚ": [("Acceso", "0.70")],
     "PROYECTO HOLOGRAMA VIP": [("Acceso VIP", "25")],
     "E-Sign": [("360 Días", "5")],
