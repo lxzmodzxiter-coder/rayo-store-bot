@@ -88,6 +88,8 @@ class Settings(BaseSettings):
     PAGE_SIZE: int = 6
     BROADCAST_DELAY: float = 0.05
     APP_VERSION: str = "professional-roles-catalog-2026-08-24"
+    PARTNER_FEE_USD: Decimal = Decimal("10.00")
+    PARTNER_DISCOUNT_PERCENT: Decimal = Decimal("20.00")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -122,6 +124,10 @@ def migrate_schema(sync_conn) -> None:
         columns = {column["name"] for column in sa_inspect(sync_conn).get_columns("users")}
         if "rank_title" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN rank_title VARCHAR(64)"))
+        if "is_partner" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN is_partner BOOLEAN NOT NULL DEFAULT 0"))
+        if "partner_since" not in columns:
+            sync_conn.execute(text("ALTER TABLE users ADD COLUMN partner_since DATETIME"))
 
 
 class UserRole(str, enum.Enum):
@@ -167,6 +173,8 @@ class User(Base):
     premium_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.USER, nullable=False)
     rank_title: Mapped[str | None] = mapped_column(String(64))
+    is_partner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    partner_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     total_spent: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
     purchases_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     referrals_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -326,6 +334,7 @@ def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
         [("🛍️ VER CATALOGO SOCIOS", "menu:catalog", None)],
         [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
         [("👤 Mi Perfil / Historial", "menu:profile", None), ("💎 Premium (10% OFF)", "menu:premium", None)],
+        [("🤝 Socio Oficial (20% OFF)", "menu:partner", None)],
         [("📞 Soporte Directo", None, "https://t.me/Lxz_Modz")],
     ]
     if channel_url:
@@ -379,6 +388,14 @@ def product_detail(product_id: int, back: str, can_buy: bool = True, variants: l
 
 def confirm(action: str, cancel: str = "menu:home") -> InlineKeyboardMarkup:
     return kb([[ ("✅ Confirmar", action, None), ("❌ Cancelar", cancel, None) ]])
+
+
+def partner_menu() -> InlineKeyboardMarkup:
+    return kb([
+        [("💰 Pagar usando mi saldo", "partner:pay_balance", None)],
+        [("🏦 Pagar con depósito / transferencia", "partner:manual", None)],
+        [("⬅️ Regresar al menú", "menu:home", None)],
+    ])
 
 
 def topup_countries() -> InlineKeyboardMarkup:
@@ -911,10 +928,11 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
                       "<code>/broadcast</code> · <code>/saldo ID CANTIDAD USD</code>\n"
                       "<code>/key ID KEY</code> · <code>/perfil</code>" if is_staff(user) else "")
     rank_display = f"\n🎖️ <b>Rango:</b> {user.rank_title}" if user.rank_title else ""
+    partner_display = "\n🤝 <b>Socio Oficial:</b> Activo · 20% OFF" if user.is_partner else ""
     text = (f"💬 <b>RESELLERS STORE EXCLUSIVE</b> 🛍️\n\n"
             f"👤 <b>Cliente:</b> {name_of(user)}\n"
             f"🆔 <b>ID de Cuenta:</b> <code>{user.telegram_id}</code>{rank_display}\n"
-            f"💰 <b>Saldo Disponible:</b> {m(user.balance)}\n\n"
+            f"💰 <b>Saldo Disponible:</b> {m(user.balance)}{partner_display}\n\n"
             f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>{admin_commands}")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     try:
@@ -1371,6 +1389,11 @@ async def buy_preview(callback: CallbackQuery, session: AsyncSession, current_us
         return
     data = await state.get_data() if state else {}
     total = price
+    partner_line = ""
+    if user.is_partner:
+        partner_discount = money(price * settings.PARTNER_DISCOUNT_PERCENT / Decimal(100))
+        total -= partner_discount
+        partner_line = f"\n🤝 Descuento Socio Oficial: -{m(partner_discount)}"
     coupon_line = ""
     coupon_code = data.get("coupon_code")
     if coupon_code:
@@ -1380,7 +1403,7 @@ async def buy_preview(callback: CallbackQuery, session: AsyncSession, current_us
             total -= discount
             coupon_line = f"\n🎟️ Descuento ({coupon_code}): -{m(discount)}"
     product_label = f"{product.name} ({variant})" if variant != "default" else product.name
-    text = f"🛒 <b>CONFIRMAR COMPRA</b>\n\n📦 Producto: {product_label}\n💵 Precio: {m(price)}{coupon_line}\n💳 Total: <b>{m(total)}</b>\n📊 Stock: {product.stock}\n💰 Saldo disponible: {m(user.balance)}\n💰 Saldo después: {m(money(user.balance) - total)}"
+    text = f"🛒 <b>CONFIRMAR COMPRA</b>\n\n📦 Producto: {product_label}\n💵 Precio: {m(price)}{partner_line}{coupon_line}\n💳 Total: <b>{m(total)}</b>\n📊 Stock: {product.stock}\n💰 Saldo disponible: {m(user.balance)}\n💰 Saldo después: {m(money(user.balance) - total)}"
     if money(user.balance) < total:
         await edit_or_answer(callback, text + "\n\n❌ Saldo insuficiente.", confirm("menu:balance", f"product:{product.id}"))
     else:
@@ -1422,13 +1445,14 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         data = await state.get_data() if state else {}
         coupon_code = data.get("coupon_code")
         coupon = None
+        partner_discount = money(price * settings.PARTNER_DISCOUNT_PERCENT / Decimal(100)) if user.is_partner else Decimal("0.00")
         discount = Decimal("0.00")
         if coupon_code:
             coupon = (await session.execute(select(Coupon).where(Coupon.code == coupon_code).with_for_update())).scalar_one_or_none()
             if coupon and (await session.execute(select(CouponRedemption).where(CouponRedemption.coupon_id == coupon.id, CouponRedemption.user_id == user.id))).scalar_one_or_none():
                 coupon = None
-            discount = coupon_discount(coupon, money(price), user)
-        total = money(price) - discount
+            discount = coupon_discount(coupon, money(price) - partner_discount, user)
+        total = money(price) - partner_discount - discount
         if user.balance < total:
             await callback.message.edit_text(f"❌ <b>SALDO INSUFICIENTE</b>\n\nSaldo actual: {m(user.balance)}\nPrecio: {m(total)}\nFalta: {m(total - money(user.balance))}", reply_markup=nav())
             return
@@ -1440,7 +1464,7 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         product.sales_count += 1
         variant_text = f" ({variant})" if variant != "default" else ""
         product_name_full = f"{product.name}{variant_text}"
-        purchase = Purchase(order_id=order_id, user_id=user.id, product_id=product.id, product_name=product_name_full, price=total, discount=discount, coupon_code=coupon.code if coupon else None, delivery_data=product.delivery_data, delivered_at=utcnow() if product.delivery_data else None)
+        purchase = Purchase(order_id=order_id, user_id=user.id, product_id=product.id, product_name=product_name_full, price=total, discount=partner_discount + discount, coupon_code=coupon.code if coupon else None, delivery_data=product.delivery_data, delivered_at=utcnow() if product.delivery_data else None)
         session.add(purchase)
         await session.flush()
         session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.PURCHASE, amount=-total, balance_after=user.balance, reference=order_id, note=product_name_full))
@@ -1466,7 +1490,8 @@ async def menu_profile(callback: CallbackQuery, session: AsyncSession, current_u
     user = await event_user(callback, session, current_user)
     if not user:
         return
-    text = f"👤 <b>MI PERFIL</b>\n\n📌 Nombre: {name_of(user)}\n🔖 Username: @{user.username or '—'}\n🆔 ID: <code>{user.telegram_id}</code>\n💰 Saldo: <b>{m(user.balance)}</b>\n💎 Premium: {'Activo' if active_premium(user) else 'Inactivo'}\n📦 Compras: {user.purchases_count}\n💵 Total gastado: {m(user.total_spent)}\n🎁 Referidos: {user.referrals_count}\n📅 Registro: {now_text(user.created_at)}\n🚫 Estado: {'Restringido' if user.is_banned else 'Activo'}"
+    partner_status = f"Activo desde {now_text(user.partner_since)}" if user.is_partner and user.partner_since else ("Activo" if user.is_partner else "Inactivo")
+    text = f"👤 <b>MI PERFIL</b>\n\n📌 Nombre: {name_of(user)}\n🔖 Username: @{user.username or '—'}\n🆔 ID: <code>{user.telegram_id}</code>\n🎖️ Rango: {user.rank_title or 'Cliente'}\n💰 Saldo: <b>{m(user.balance)}</b>\n💎 Premium: {'Activo' if active_premium(user) else 'Inactivo'}\n🤝 Socio Oficial: {partner_status} · 20% OFF\n📦 Compras: {user.purchases_count}\n💵 Total gastado: {m(user.total_spent)}\n🎁 Referidos: {user.referrals_count}\n📅 Registro: {now_text(user.created_at)}\n🚫 Estado: {'Restringido' if user.is_banned else 'Activo'}"
     await edit_or_answer(callback, text, nav())
 
 
@@ -1809,6 +1834,66 @@ async def coupon_apply(message: Message, state: FSMContext, session: AsyncSessio
         await message.answer("❌ Ya utilizaste este cupón."); return
     await state.update_data(coupon_code=code)
     await message.answer(f"✅ Cupón <code>{code}</code> aplicado. Se calculará el ahorro al confirmar la compra.", reply_markup=nav())
+
+
+@router.callback_query(F.data == "menu:partner")
+async def menu_partner(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
+    user = await event_user(callback, session, current_user)
+    if not user:
+        return
+    if user.is_partner:
+        text = "🤝 <b>SOCIO OFICIAL</b>\n\nEstado: 🟢 Activo\nBeneficio: 20% de descuento general en el catálogo.\nSoporte: atención prioritaria."
+    else:
+        text = ("🤝 <b>SISTEMA DE ASOCIACIÓN</b>\n\n"
+                "Al convertirte en Socio Oficial obtienes:\n"
+                "✅ Descuento general del 20% en el catálogo\n"
+                "✅ Permiso de reventa según tus acuerdos comerciales\n"
+                "✅ Atención prioritaria\n\n"
+                f"💵 Inversión única: <b>{m(settings.PARTNER_FEE_USD)}</b>\n\n"
+                "Elige cómo deseas pagar:")
+    await edit_or_answer(callback, text, partner_menu())
+
+
+@router.callback_query(F.data == "partner:pay_balance")
+async def partner_pay_balance(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
+    user = await event_user(callback, session, current_user)
+    if not user:
+        return
+    if user.is_partner:
+        await edit_or_answer(callback, "✅ Ya tienes activo el estado de Socio Oficial.", nav())
+        return
+    fee = money(settings.PARTNER_FEE_USD)
+    if money(user.balance) < fee:
+        await edit_or_answer(callback, f"❌ Saldo insuficiente.\n\nNecesitas: {m(fee)}\nSaldo actual: {m(user.balance)}\n\nPuedes recargar saldo o pagar por transferencia.", partner_menu())
+        return
+    await edit_or_answer(callback, f"🤝 <b>CONFIRMAR SOCIO OFICIAL</b>\n\nInversión única: {m(fee)}\nDescuento permanente: {settings.PARTNER_DISCOUNT_PERCENT}%\nSaldo después: {m(money(user.balance) - fee)}", confirm("partner:confirm", "menu:partner"))
+
+
+@router.callback_query(F.data == "partner:confirm")
+async def partner_confirm(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
+    user = await event_user(callback, session, current_user)
+    if not user:
+        return
+    user = (await session.execute(select(User).where(User.telegram_id == user.telegram_id).with_for_update())).scalar_one_or_none()
+    if not user or user.is_partner:
+        await callback.answer("El estado ya está activo o el usuario no existe.", show_alert=True)
+        return
+    fee = money(settings.PARTNER_FEE_USD)
+    if money(user.balance) < fee:
+        await edit_or_answer(callback, "❌ El saldo ya no es suficiente para activar Socio Oficial.", partner_menu())
+        return
+    user.balance = money(user.balance) - fee
+    user.is_partner = True
+    user.partner_since = utcnow()
+    session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.DEBIT, amount=-fee, balance_after=user.balance, reference="partner", note="Socio Oficial"))
+    await log_event(session, user.telegram_id, "partner_activate", str(user.telegram_id), f"fee={fee}")
+    await session.commit()
+    await edit_or_answer(callback, f"✅ <b>SOCIO OFICIAL ACTIVADO</b>\n\nDescuento aplicado: {settings.PARTNER_DISCOUNT_PERCENT}%\nSaldo restante: {m(user.balance)}", nav())
+
+
+@router.callback_query(F.data == "partner:manual")
+async def partner_manual(callback: CallbackQuery, current_user: User | None = None):
+    await edit_or_answer(callback, f"🏦 <b>PAGO MANUAL SOCIO OFICIAL</b>\n\nRealiza un depósito de {m(settings.PARTNER_FEE_USD)} usando los métodos publicados en <b>Recargar Saldo</b>. Después envía el comprobante y tu ID al soporte: {settings.SUPPORT_URL}\n\nEl administrador verificará el pago y activará tu beneficio. No envíes dinero sin conservar tu comprobante.", nav())
 
 
 @router.callback_query(F.data == "menu:premium")
