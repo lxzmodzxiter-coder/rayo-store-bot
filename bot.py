@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
@@ -34,6 +35,7 @@ from aiogram.types import (
     Message,
     TelegramObject,
 )
+from openai import AsyncOpenAI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import (
     BigInteger,
@@ -65,7 +67,12 @@ class Settings(BaseSettings):
     CURRENCY: str = "USD"
     TIMEZONE: str = "America/Lima"
     OFFICIAL_CHANNEL_URL: str = ""
-    SUPPORT_USERNAME: str = ""
+    SUPPORT_USERNAME: str = "Lxz_Modz"
+    SUPPORT_URL: str = "https://t.me/Lxz_Modz"
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = ""
+    OPENAI_MODEL: str = "gpt-5-mini"
+    AI_COOLDOWN_SECONDS: float = 2.0
     YAPE_NUMBER: str = ""
     PLIN_NUMBER: str = ""
     BINANCE_USDT_ENABLED: bool = False
@@ -301,7 +308,7 @@ def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
         [("🛍️ VER CATALOGO SOCIOS", "menu:catalog", None)],
         [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
         [("👤 Mi Perfil / Historial", "menu:profile", None), ("💎 Premium (10% OFF)", "menu:premium", None)],
-        [("📞 Soporte Directo", "menu:support", None)],
+        [("📞 Soporte Directo", None, "https://t.me/Lxz_Modz")],
     ]
     if channel_url:
         rows[-1].append(("📢 Canal Oficial", None, channel_url))
@@ -693,6 +700,68 @@ def purchase_duration(purchase: Purchase) -> str:
     return "No especificada"
 def name_of(user: User) -> str:
     return " ".join(x for x in [user.first_name, user.last_name] if x) or str(user.telegram_id)
+
+
+_ai_client: AsyncOpenAI | None = None
+_ai_last_request: dict[int, float] = {}
+
+
+async def ai_catalog_context(session: AsyncSession) -> str:
+    products = (await session.execute(select(Product).order_by(Product.category, Product.name))).scalars().all()
+    if not products:
+        return "No hay productos registrados todavía."
+    rows = []
+    for product in products[:80]:
+        status = "disponible" if product.is_active and product.stock > 0 else "no disponible todavía"
+        variants = product.description or "sin variantes configuradas"
+        rows.append(f"- {product.name} | categoría: {product.category} | estado: {status} | stock: {product.stock} | precios/duraciones: {variants[:300]}")
+    return "\n".join(rows)
+
+
+async def client_ai_answer(message: Message, bot: Bot, session: AsyncSession, user: User) -> None:
+    global _ai_client
+    prompt = (message.text or "").strip()
+    if not prompt or prompt.startswith("/"):
+        return
+    now = monotonic()
+    last = _ai_last_request.get(user.telegram_id, 0.0)
+    if now - last < settings.AI_COOLDOWN_SECONDS:
+        await message.answer("⏳ Espera un momento antes de enviar otra consulta.")
+        return
+    _ai_last_request[user.telegram_id] = now
+    if not settings.OPENAI_API_KEY:
+        await message.answer(f"🤖 El asistente está temporalmente fuera de servicio.\n\n📞 Soporte: {settings.SUPPORT_URL}")
+        return
+    if _ai_client is None:
+        client_options = {"api_key": settings.OPENAI_API_KEY}
+        if settings.OPENAI_BASE_URL:
+            client_options["base_url"] = settings.OPENAI_BASE_URL
+        _ai_client = AsyncOpenAI(**client_options)
+    context = await ai_catalog_context(session)
+    system_prompt = ("Eres el asistente de atención al cliente de LXZ STORE. Responde en español, con claridad y máximo 800 caracteres. "
+                     "Usa únicamente el catálogo y las reglas de esta instrucción. No inventes precios, stock, cuentas, pagos, claves ni duraciones. "
+                     "Nunca apruebes recargas, entregues saldo, confirmes pagos ni reveles datos administrativos. Para pagos, comprobantes, claves, "
+                     "errores no resueltos o datos desconocidos, indica que el cliente debe contactar soporte en https://t.me/Lxz_Modz. "
+                     "Si el producto está marcado como no disponible todavía, dilo claramente. "
+                     "Guía: el cliente puede abrir el catálogo para consultar productos; para recargar debe elegir país y monto, "
+                     "en Perú verá PEN con Yape, Plin, Ligo o CCI, y en otros países puede ver USDC/USDT y redes disponibles. "
+                     "Toda recarga requiere comprobante y revisión del administrador; nunca digas que un pago fue recibido o aprobado sin esa revisión.\n\nCATÁLOGO ACTUAL:\n" + context)
+    try:
+        response = await asyncio.wait_for(
+            _ai_client.chat.completions.create(
+                model=settings.OPENAI_MODEL,
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt[:1200]}],
+                max_completion_tokens=450,
+            ),
+            timeout=18,
+        )
+        answer = (response.choices[0].message.content or "").strip()
+        if not answer:
+            raise RuntimeError("La IA devolvió una respuesta vacía")
+        await message.answer("🤖 <b>Asistente LXZ</b>\n\n" + escape(answer[:3500]))
+    except Exception:
+        logger.exception("AI customer response failed")
+        await message.answer(f"🤖 No pude responder en este momento.\n\n📞 Soporte: {settings.SUPPORT_URL}")
 
 
 def is_admin(user: User | None) -> bool:
@@ -1557,7 +1626,8 @@ async def menu_referrals(callback: CallbackQuery, bot: Bot, session: AsyncSessio
 @router.callback_query(F.data == "menu:support")
 async def menu_support(callback: CallbackQuery):
     contact = f"@{settings.SUPPORT_USERNAME.lstrip('@')}" if settings.SUPPORT_USERNAME else "el administrador de la tienda"
-    await edit_or_answer(callback, f"📞 <b>SOPORTE</b>\n\nPara recibir ayuda, contacta a {contact}.", nav())
+    support_markup = kb([[("📞 Abrir soporte", None, settings.SUPPORT_URL)], [("⬅️ Volver", "menu:home", None)]])
+    await edit_or_answer(callback, f"📞 <b>SOPORTE</b>\n\nPara recibir ayuda, contacta a {contact}.", support_markup)
 
 
 async def check_admin(callback: CallbackQuery, session: AsyncSession, current_user: User | None) -> User | None:
@@ -1970,6 +2040,13 @@ async def product_search(message: Message, state: FSMContext, session: AsyncSess
     query = message.text.strip(); products = (await session.execute(select(Product).where(Product.is_active.is_(True), Product.name.ilike(f"%{query}%")).limit(10))).scalars().all()
     rows = [[(f"📦 {p.name} · {m(p.price)}", f"product:{p.id}", None)] for p in products]; rows.append([("⬅️ Catálogo", "menu:catalog", None)])
     await state.clear(); await message.answer(("🔎 <b>RESULTADOS</b>\n\n" + "\n".join(f"• {p.name} — {m(p.price)}" for p in products)) if products else "❌ No encontramos productos relacionados.", reply_markup=kb(rows))
+
+
+@router.message(F.text)
+async def client_ai(message: Message, bot: Bot, session: AsyncSession, current_user: User | None = None):
+    user = await event_user(message, session, current_user)
+    if user:
+        await client_ai_answer(message, bot, session, user)
 
 
 @router.callback_query()
