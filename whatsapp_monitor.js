@@ -62,6 +62,10 @@ function remember(key) {
   return saveQueue;
 }
 
+function shouldForward(text) {
+  return Boolean(text && MEDIAFIRE_PATTERN.test(text));
+}
+
 function messageKey(message, channelName, text) {
   const serialized = message.id?._serialized || `${message.timestamp || "0"}:${message.from || ""}`;
   return crypto.createHash("sha256").update(`${channelName}:${serialized}:${text}`).digest("hex");
@@ -125,7 +129,7 @@ async function resolveChannel(message) {
 async function processMessage(message) {
   if (message.fromMe) return;
   const text = (message.body || "").trim();
-  if (!text || !MEDIAFIRE_PATTERN.test(text)) return;
+  if (!shouldForward(text)) return;
 
   let source;
   try {
@@ -190,7 +194,11 @@ async function main() {
   await client.initialize();
 }
 
-main().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { CHANNELS, chunks, shouldForward };
