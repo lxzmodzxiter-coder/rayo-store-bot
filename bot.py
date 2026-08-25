@@ -114,6 +114,7 @@ WHATSAPP_CHANNELS = (
     ("Holograma Updates - Att", "https://whatsapp.com/channel/0029VbBks2cCsU9Iq6WHw135"),
     ("𝙅𝙊𝙀𝙇 𝙈𝙊𝘿𝙎 ✅", "https://whatsapp.com/channel/0029Vb6BlwVISTkEKGAI3F3W"),
     ("Monite Updates - Att", "https://whatsapp.com/channel/0029VbCeewM7tkj2eJlxpd39"),
+    ("🔥 𝙃𝙂 𝘾𝙃𝙀𝘼𝙏𝙎 𝙐𝙋𝘿𝘼𝙏𝙀𝙎 - 𝙋𝙍𝙊𝙈𝙊𝘾̧𝙊̃𝙀𝙎 🔥", "https://whatsapp.com/channel/0029Vb6FTtpGE56fIpK5p00E"),
 )
 
 
