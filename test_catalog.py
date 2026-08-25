@@ -29,8 +29,15 @@ async def main():
         for name, variants in PRICE_CATALOG.items():
             assert by_name[name].price == Decimal(variants[0][1])
         for product in products:
-            assert product.stock == 0
-            assert product.is_active is False
+            assert product.price > 0
+            assert product.stock == 5
+            assert product.is_active is True
+        by_name["DRIP CLIENT"].stock = 3
+        await session.commit()
+        await seed_initial_products(session)
+        persisted = await session.get(Product, by_name["DRIP CLIENT"].id)
+        assert persisted.stock == 3
+        assert persisted.is_active is True
 
     print("CATALOG_OK")
 

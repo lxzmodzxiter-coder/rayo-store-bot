@@ -108,16 +108,6 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-WHATSAPP_CHANNELS = (
-    ("DripClient Update - Att", "https://whatsapp.com/channel/0029VbAsXxm6RGJMuXL1RA1P"),
-    ("HG-CHEATS Update - Att", "https://whatsapp.com/channel/0029VbBHFBbJkK76AQmq3p3D"),
-    ("Holograma Updates - Att", "https://whatsapp.com/channel/0029VbBks2cCsU9Iq6WHw135"),
-    ("𝙅𝙊𝙀𝙇 𝙈𝙊𝘿𝙎 ✅", "https://whatsapp.com/channel/0029Vb6BlwVISTkEKGAI3F3W"),
-    ("Monite Updates - Att", "https://whatsapp.com/channel/0029VbCeewM7tkj2eJlxpd39"),
-    ("🔥 𝙃𝙂 𝘾𝙃𝙀𝘼𝙏𝙎 𝙐𝙋𝘿𝘼𝙏𝙀𝙎 - 𝙋𝙍𝙊𝙈𝙊𝘾̧𝙊̃𝙀𝙎 🔥", "https://whatsapp.com/channel/0029Vb6FTtpGE56fIpK5p00E"),
-)
-
-
 # Modelos de datos
 class Base(DeclarativeBase):
     pass
@@ -137,6 +127,13 @@ def migrate_schema(sync_conn) -> None:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN is_partner BOOLEAN NOT NULL DEFAULT 0"))
         if "partner_since" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN partner_since DATETIME"))
+
+
+class StoreSetting(Base):
+    __tablename__ = "store_settings"
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class UserRole(str, enum.Enum):
@@ -344,7 +341,6 @@ def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
         [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
         [("👤 Mi Perfil / Historial", "menu:profile", None), ("💎 Premium (10% OFF)", "menu:premium", None)],
         [("🤝 Socio Oficial (20% OFF)", "menu:partner", None)],
-        [("📲 Canales WhatsApp", "menu:whatsapp_channels", None)],
         [("📞 Soporte Directo", None, "https://t.me/Lxz_Modz")],
     ]
     if channel_url:
@@ -406,12 +402,6 @@ def partner_menu() -> InlineKeyboardMarkup:
         [("🏦 Pagar con depósito / transferencia", "partner:manual", None)],
         [("⬅️ Regresar al menú", "menu:home", None)],
     ])
-
-
-def whatsapp_channels_menu() -> InlineKeyboardMarkup:
-    rows = [[(f"📲 {name}", None, url)] for name, url in WHATSAPP_CHANNELS]
-    rows.append([("🏠 Regresar al menú", "menu:home", None)])
-    return kb(rows)
 
 
 def topup_countries() -> InlineKeyboardMarkup:
@@ -661,6 +651,13 @@ PRICE_CATALOG = {
     "BYPASS UID": [("Permanente", "40")],
     "NUMEROS VIRTUALES (Para WhatsApp)": [("Acceso", "10")],
     "PLATAFORMA STREAMING": [("Acceso", "25")],
+    # Referencia pública observada en el bot revisado: 1 día $1.80, 7 días $5.50, 30 días $10.
+    "MONITE IOS PRO": [("1 Día", "1.80"), ("7 Días", "5.50"), ("30 Días", "10")],
+    # Referencia pública observada en el bot revisado: 1 día $1, 7 días $4.50, 30 días $8.
+    "MONITE IOS BASIC": [("1 Día", "1"), ("7 Días", "4.50"), ("30 Días", "8")],
+    "GBOX CERTIFICADO": [("90 Días", "7")],
+    # No se encontró una tarifa pública verificable de PRIME HOCK APK; se usa $5 por 1 día como referencia provisional comparable.
+    "PRIME HOCK APK": [("1 Día", "5")],
 }
 PRICE_CATEGORIES = {
     "PATO REGEDIT": "Android", "BALA MOD ANDROID": "Android", "PROXY HG CHEATS": "Android",
@@ -981,6 +978,18 @@ LEGACY_CATEGORY_MAP = {
 }
 
 
+async def activate_initial_inventory_once(session: AsyncSession) -> None:
+    marker = await session.get(StoreSetting, "initial_inventory_5_v1")
+    if marker:
+        return
+    products = (await session.execute(select(Product))).scalars().all()
+    for product in products:
+        if product.price > 0:
+            product.stock = 5
+            product.is_active = True
+    session.add(StoreSetting(key="initial_inventory_5_v1", value="5"))
+
+
 async def seed_initial_products(session: AsyncSession) -> None:
     for legacy, current in LEGACY_CATEGORY_MAP.items():
         await session.execute(update(Product).where(Product.category == legacy).values(category=current))
@@ -1000,6 +1009,8 @@ async def seed_initial_products(session: AsyncSession) -> None:
                     existing.price = base_price
                 if image_path and not existing.image_file_id:
                     existing.image_file_id = image_path
+    await session.flush()
+    await activate_initial_inventory_once(session)
     await session.commit()
 
 
@@ -1926,14 +1937,6 @@ async def menu_referrals(callback: CallbackQuery, bot: Bot, session: AsyncSessio
     me = await bot.get_me()
     link = f"https://t.me/{me.username}?start=ref_{user.telegram_id}"
     await edit_or_answer(callback, f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\n🔗 Tu enlace:\n<code>{link}</code>\n\n👥 Invitados: {user.referrals_count}\n🎁 Recompensas: configuradas por administración\n💰 Ganado: {m(user.referral_earnings)}", nav())
-
-
-@router.callback_query(F.data == "menu:whatsapp_channels")
-async def menu_whatsapp_channels(callback: CallbackQuery):
-    text = ("📲 <b>CANALES DE WHATSAPP</b>\n\n"
-            "Abre el canal que te interese y pulsa <b>Seguir</b> desde WhatsApp.\n"
-            "Los enlaces son públicos; el bot no inicia sesión ni sigue canales automáticamente.")
-    await edit_or_answer(callback, text, whatsapp_channels_menu())
 
 
 @router.callback_query(F.data == "menu:support")
