@@ -108,6 +108,14 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+WHATSAPP_CHANNELS = (
+    ("DripClient Update - Att", "https://whatsapp.com/channel/0029VbAsXxm6RGJMuXL1RA1P"),
+    ("HG-CHEATS Update - Att", "https://whatsapp.com/channel/0029VbBHFBbJkK76AQmq3p3D"),
+    ("Holograma Updates - Att", "https://whatsapp.com/channel/0029VbBks2cCsU9Iq6WHw135"),
+    ("𝙅𝙊𝙀𝙇 𝙈𝙊𝘿𝙎 ✅", "https://whatsapp.com/channel/0029Vb6BlwVISTkEKGAI3F3W"),
+    ("Monite Updates - Att", "https://whatsapp.com/channel/0029VbCeewM7tkj2eJlxpd39"),
+)
+
 
 # Modelos de datos
 class Base(DeclarativeBase):
@@ -335,6 +343,7 @@ def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
         [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
         [("👤 Mi Perfil / Historial", "menu:profile", None), ("💎 Premium (10% OFF)", "menu:premium", None)],
         [("🤝 Socio Oficial (20% OFF)", "menu:partner", None)],
+        [("📲 Canales WhatsApp", "menu:whatsapp_channels", None)],
         [("📞 Soporte Directo", None, "https://t.me/Lxz_Modz")],
     ]
     if channel_url:
@@ -396,6 +405,12 @@ def partner_menu() -> InlineKeyboardMarkup:
         [("🏦 Pagar con depósito / transferencia", "partner:manual", None)],
         [("⬅️ Regresar al menú", "menu:home", None)],
     ])
+
+
+def whatsapp_channels_menu() -> InlineKeyboardMarkup:
+    rows = [[(f"📲 {name}", None, url)] for name, url in WHATSAPP_CHANNELS]
+    rows.append([("🏠 Regresar al menú", "menu:home", None)])
+    return kb(rows)
 
 
 def topup_countries() -> InlineKeyboardMarkup:
@@ -1910,6 +1925,14 @@ async def menu_referrals(callback: CallbackQuery, bot: Bot, session: AsyncSessio
     me = await bot.get_me()
     link = f"https://t.me/{me.username}?start=ref_{user.telegram_id}"
     await edit_or_answer(callback, f"🎁 <b>PROGRAMA DE REFERIDOS</b>\n\n🔗 Tu enlace:\n<code>{link}</code>\n\n👥 Invitados: {user.referrals_count}\n🎁 Recompensas: configuradas por administración\n💰 Ganado: {m(user.referral_earnings)}", nav())
+
+
+@router.callback_query(F.data == "menu:whatsapp_channels")
+async def menu_whatsapp_channels(callback: CallbackQuery):
+    text = ("📲 <b>CANALES DE WHATSAPP</b>\n\n"
+            "Abre el canal que te interese y pulsa <b>Seguir</b> desde WhatsApp.\n"
+            "Los enlaces son públicos; el bot no inicia sesión ni sigue canales automáticamente.")
+    await edit_or_answer(callback, text, whatsapp_channels_menu())
 
 
 @router.callback_query(F.data == "menu:support")
