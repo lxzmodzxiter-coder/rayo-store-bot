@@ -18,6 +18,7 @@ from bot import (
     is_admin,
     is_owner,
     is_staff,
+    settings,
 )
 
 
@@ -61,56 +62,52 @@ async def main():
         await conn.run_sync(Base.metadata.create_all)
 
     async with async_session_maker() as session:
-        seller_tg = TelegramUser(id=200, is_bot=False, first_name="Seller")
-        seller = await get_or_create_user(seller_tg, session)
-        seller.role = UserRole.SELLER
+        socio_tg = TelegramUser(id=200, is_bot=False, first_name="Socio")
+        socio = await get_or_create_user(socio_tg, session)
+        socio.role = UserRole.SOCIO
 
-        support_tg = TelegramUser(id=250, is_bot=False, first_name="Support")
-        support = await get_or_create_user(support_tg, session)
-        support.role = UserRole.SUPPORT
+        usuario_tg = TelegramUser(id=250, is_bot=False, first_name="Usuario")
+        usuario = await get_or_create_user(usuario_tg, session)
+        usuario.role = UserRole.USUARIO
 
         admin_tg = TelegramUser(id=300, is_bot=False, first_name="Admin")
         admin = await get_or_create_user(admin_tg, session)
         admin.role = UserRole.ADMIN
 
-        owner_tg = TelegramUser(id=123, is_bot=False, first_name="Owner")
+        owner_tg = TelegramUser(id=settings.OWNER_ID, is_bot=False, first_name="Owner")
         owner = await get_or_create_user(owner_tg, session)
-        owner.role = UserRole.OWNER
+        assert owner.role == UserRole.DUENO
         await session.commit()
 
-        assert is_staff(seller) and not is_admin(seller) and not is_owner(seller)
-        assert is_staff(support) and not is_admin(support)
+        assert not is_staff(socio) and not is_admin(socio) and not is_owner(socio)
+        assert not is_staff(usuario) and not is_admin(usuario)
         assert is_admin(admin) and is_staff(admin)
         assert is_owner(owner) and can_manage_products(owner)
-        assert can_manage_products(seller) and can_deliver_keys(seller)
-        assert not can_manage_products(support) and not can_deliver_keys(support)
+        assert can_manage_products(admin) and can_deliver_keys(admin)
+        assert not can_manage_products(socio) and not can_deliver_keys(socio)
 
         bot = FakeBot()
 
-        seller_saldo = FakeMessage(seller_tg, "/saldo 123 10 USD")
-        await cmd_saldo(seller_saldo, bot, session, current_user=seller)
-        assert "Permisos insuficientes" in seller_saldo.answers[0]
+        socio_saldo = FakeMessage(socio_tg, "/saldo 123 10 USD")
+        await cmd_saldo(socio_saldo, bot, session, current_user=socio)
+        assert "Permisos insuficientes" in socio_saldo.answers[0]
 
-        support_broadcast = FakeMessage(support_tg, "/broadcast")
-        await cmd_broadcast(support_broadcast, FakeState(), session, current_user=support)
-        assert "Solo Administradores" in support_broadcast.answers[0]
-
-        seller_broadcast = FakeMessage(seller_tg, "/broadcast")
-        await cmd_broadcast(seller_broadcast, FakeState(), session, current_user=seller)
-        assert "Solo Administradores" in seller_broadcast.answers[0]
+        socio_broadcast = FakeMessage(socio_tg, "/broadcast")
+        await cmd_broadcast(socio_broadcast, FakeState(), session, current_user=socio)
+        assert "Solo Administradores" in socio_broadcast.answers[0]
 
         admin_saldo = FakeMessage(admin_tg, "/saldo 999 10 USD")
         await cmd_saldo(admin_saldo, bot, session, current_user=admin)
         assert "Usuario no encontrado" in admin_saldo.answers[0]
 
-        seller_agregas = FakeMessage(seller_tg, "/agregas")
-        await cmd_agregas(seller_agregas, FakeState(), session, current_user=seller)
-        assert "NUEVO PRODUCTO" in seller_agregas.answers[0]
+        admin_agregas = FakeMessage(admin_tg, "/agregas")
+        await cmd_agregas(admin_agregas, FakeState(), session, current_user=admin)
+        assert "NUEVO PRODUCTO" in admin_agregas.answers[0]
 
-        support_balance = FakeMessage(support_tg, "10")
-        support_state = FakeState()
-        await admin_balance_amount(support_balance, support_state, session, current_user=support)
-        assert support_state.cleared and not support_balance.answers
+        socio_balance = FakeMessage(socio_tg, "10")
+        socio_state = FakeState()
+        await admin_balance_amount(socio_balance, socio_state, session, current_user=socio)
+        assert socio_state.cleared and not socio_balance.answers
 
     print("PERMISSIONS_OK")
 

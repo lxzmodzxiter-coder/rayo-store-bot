@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     REFERRAL_BONUS: float = 0.0
     PAGE_SIZE: int = 6
     BROADCAST_DELAY: float = 0.05
-    APP_VERSION: str = "professional-roles-catalog-2026-08-24"
+    APP_VERSION: str = "professional-roles-security-inventory-2026-08-26"
     PARTNER_FEE_USD: Decimal = Decimal("10.00")
     PARTNER_DISCOUNT_PERCENT: Decimal = Decimal("20.00")
 
@@ -127,6 +127,14 @@ def migrate_schema(sync_conn) -> None:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN is_partner BOOLEAN NOT NULL DEFAULT 0"))
         if "partner_since" not in columns:
             sync_conn.execute(text("ALTER TABLE users ADD COLUMN partner_since DATETIME"))
+        if "role" in columns:
+            # UserRole almacena los nombres de los miembros del enum en SQLite.
+            # Convertimos los roles antiguos para que no queden valores huérfanos.
+            sync_conn.execute(text("UPDATE users SET role = 'USUARIO' WHERE lower(role) IN ('user', 'usuario')"))
+            sync_conn.execute(text("UPDATE users SET role = 'SOCIO' WHERE lower(role) IN ('vip', 'socio')"))
+            sync_conn.execute(text("UPDATE users SET role = 'ADMIN' WHERE lower(role) IN ('support', 'soporte', 'seller', 'vendedor', 'admin')"))
+            sync_conn.execute(text("UPDATE users SET role = 'OWNER' WHERE lower(role) = 'owner'"))
+            sync_conn.execute(text("UPDATE users SET role = 'DUENO' WHERE telegram_id = :owner_id"), {"owner_id": settings.OWNER_ID})
 
 
 class StoreSetting(Base):
@@ -137,12 +145,11 @@ class StoreSetting(Base):
 
 
 class UserRole(str, enum.Enum):
-    USER = "user"
-    VIP = "vip"
-    SUPPORT = "support"
-    SELLER = "seller"
-    ADMIN = "admin"
-    OWNER = "owner"
+    DUENO = "DUEÑO"
+    OWNER = "OWNER"
+    ADMIN = "ADMIN"
+    SOCIO = "SOCIO"
+    USUARIO = "USUARIO"
 
 
 class PurchaseStatus(str, enum.Enum):
@@ -177,7 +184,7 @@ class User(Base):
     ban_reason: Mapped[str | None] = mapped_column(String(255))
     is_premium: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     premium_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.USER, nullable=False)
+    role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), default=UserRole.USUARIO, nullable=False)
     rank_title: Mapped[str | None] = mapped_column(String(64))
     is_partner: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     partner_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -345,9 +352,9 @@ def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
     ]
     if channel_url:
         rows[-1].append(("📢 Canal Oficial", None, channel_url))
-    if role in (UserRole.SUPPORT, UserRole.SELLER, UserRole.ADMIN, UserRole.OWNER):
+    if role in (UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO):
         rows.append([("⚙️ Panel Admin", "admin:home", None)])
-    if role == UserRole.OWNER:
+    if role in (UserRole.OWNER, UserRole.DUENO):
         rows.append([("👑 Panel Owner", "owner:home", None)])
     return kb(rows)
 
@@ -500,6 +507,16 @@ class DatabaseMiddleware(BaseMiddleware):
 
 
 # Middleware de autenticación
+BANNED_TEXT = (
+    "🚫 <b>ACCESO BLOQUEADO</b>\n\n"
+    "Tu cuenta tiene una restricción permanente en LXZ STORE.\n"
+    "No puedes usar comandos, abrir el menú ni utilizar botones.\n\n"
+    "Para solicitar una revisión o desbaneo, contacta a soporte: "
+    f"{settings.SUPPORT_URL}"
+)
+BANNED_MARKUP = kb([[('📞 Contactar soporte', None, settings.SUPPORT_URL)]])
+
+
 class AuthMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]], event: TelegramObject, data: dict[str, Any]) -> Any:
         session: AsyncSession | None = data.get("session")
@@ -508,9 +525,14 @@ class AuthMiddleware(BaseMiddleware):
         user = (await session.execute(select(User).where(User.telegram_id == event.from_user.id))).scalar_one_or_none()
         if user and user.is_banned:
             if isinstance(event, CallbackQuery):
-                await event.answer("🚫 Acceso restringido.", show_alert=True)
+                await event.answer("🚫 Baneo permanente. Contacta a soporte.", show_alert=True)
+                if event.message:
+                    try:
+                        await event.message.edit_text(BANNED_TEXT, reply_markup=BANNED_MARKUP)
+                    except TelegramBadRequest:
+                        await event.message.answer(BANNED_TEXT, reply_markup=BANNED_MARKUP)
             else:
-                await event.answer("🚫 <b>ACCESO RESTRINGIDO</b>\n\nTu acceso a LXZ STORE BEST se encuentra limitado.")
+                await event.answer(BANNED_TEXT, reply_markup=BANNED_MARKUP, disable_web_page_preview=True)
             return
         data["current_user"] = user
         return await handler(event, data)
@@ -838,18 +860,20 @@ async def client_ai_answer(message: Message, bot: Bot, session: AsyncSession, us
 
 
 def is_admin(user: User | None) -> bool:
-    return bool(user and user.role in (UserRole.ADMIN, UserRole.OWNER))
+    return bool(user and user.role in (UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO))
+
 
 def is_staff(user: User | None) -> bool:
-    return bool(user and user.role in (UserRole.SUPPORT, UserRole.SELLER, UserRole.ADMIN, UserRole.OWNER))
+    return bool(user and user.role in (UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO))
 
 
 def is_owner(user: User | None) -> bool:
-    return bool(user and user.role == UserRole.OWNER)
+    return bool(user and user.role in (UserRole.OWNER, UserRole.DUENO))
+
 
 
 def can_manage_products(user: User | None) -> bool:
-    return bool(user and user.role in (UserRole.SELLER, UserRole.ADMIN, UserRole.OWNER))
+    return bool(user and user.role in (UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO))
 
 
 def can_deliver_keys(user: User | None) -> bool:
@@ -874,7 +898,7 @@ async def get_or_create_user(telegram_user, session: AsyncSession, current: User
         if not user.rank_title:
             user.rank_title = "Cliente"
         if telegram_user.id == settings.OWNER_ID:
-            user.role = UserRole.OWNER
+            user.role = UserRole.DUENO
         await session.commit()
         return user
     referred_by = None
@@ -888,7 +912,7 @@ async def get_or_create_user(telegram_user, session: AsyncSession, current: User
                     ref.referrals_count += 1
         except ValueError:
             pass
-    role = UserRole.OWNER if telegram_user.id == settings.OWNER_ID else (UserRole.ADMIN if telegram_user.id in settings.admin_ids else UserRole.USER)
+    role = UserRole.DUENO if telegram_user.id == settings.OWNER_ID else (UserRole.ADMIN if telegram_user.id in settings.admin_ids else UserRole.USUARIO)
     user = User(telegram_id=telegram_user.id, username=telegram_user.username, first_name=telegram_user.first_name or "Usuario", last_name=telegram_user.last_name, role=role, referred_by=referred_by, rank_title="Cliente Nuevo")
     session.add(user)
     await session.commit()
@@ -973,15 +997,25 @@ LEGACY_CATEGORY_MAP = {
 
 
 async def activate_initial_inventory_once(session: AsyncSession) -> None:
-    marker = await session.get(StoreSetting, "initial_inventory_5_v1")
-    if marker:
+    marker_key = "initial_inventory_price_ge_10_v2"
+    if await session.get(StoreSetting, marker_key):
         return
     products = (await session.execute(select(Product))).scalars().all()
+    threshold = Decimal("10.00")
+    legacy_activation = await session.get(StoreSetting, "initial_inventory_5_v1")
     for product in products:
-        if product.price > 0:
+        # El esquema mantiene un stock por producto; por eso el umbral usa
+        # el precio base (la primera variante), no el precio de cada variante.
+        if product.price < threshold:
+            product.stock = 0
+            product.is_active = False
+        elif not legacy_activation:
+            # En una base nueva, el inventario inicial real es de cinco.
             product.stock = 5
             product.is_active = True
-    session.add(StoreSetting(key="initial_inventory_5_v1", value="5"))
+        # Si ya existía la política v1, se conserva el stock de los productos
+        # caros para no reponer unidades que pudieron venderse antes del v2.
+    session.add(StoreSetting(key=marker_key, value="base_price_ge_10_stock_5"))
 
 
 async def seed_initial_products(session: AsyncSession) -> None:
@@ -1025,7 +1059,7 @@ async def cmd_id(message: Message, session: AsyncSession, current_user: User | N
 
 @router.message(Command("rangos", ignore_case=True))
 async def cmd_rangos(message: Message):
-    await message.answer("🎖️ <b>ROLES Y RANGOS</b>\n\n👤 Usuario: compras y recargas.\n💎 VIP: beneficios comerciales habilitados por la tienda.\n🛠️ Soporte: consultas y lectura operativa.\n🛍️ Vendedor: catálogo, stock y entrega de Keys.\n🔐 Administrador: operaciones, pagos y seguridad.\n👑 Owner: control total y gestión del equipo.")
+    await message.answer("🎖️ <b>ROLES Y RANGOS</b>\n\n👤 USUARIO: compras y recargas.\n🤝 SOCIO: beneficios comerciales habilitados por la tienda.\n🔐 ADMIN: operaciones, pagos y seguridad.\n👑 OWNER: gestión avanzada del equipo.\n🏆 DUEÑO: control total de la tienda.")
 
 
 @router.message(Command("miscompras", ignore_case=True))
@@ -1064,9 +1098,13 @@ async def cmd_rol(message: Message, session: AsyncSession, current_user: User | 
     actor = await event_user(message, session, current_user)
     if not is_owner(actor): await message.answer("❌ Solo el Owner puede cambiar roles."); return
     parts = (message.text or "").split()
-    aliases = {"usuario": UserRole.USER, "user": UserRole.USER, "vip": UserRole.VIP, "soporte": UserRole.SUPPORT, "support": UserRole.SUPPORT, "vendedor": UserRole.SELLER, "seller": UserRole.SELLER, "admin": UserRole.ADMIN}
+    aliases = {
+        "dueño": UserRole.DUENO, "dueno": UserRole.DUENO,
+        "owner": UserRole.OWNER, "admin": UserRole.ADMIN,
+        "socio": UserRole.SOCIO, "usuario": UserRole.USUARIO,
+    }
     if len(parts) != 3 or parts[2].lower() not in aliases:
-        await message.answer("Uso: /rol ID ROL\nRoles: usuario, vip, soporte, vendedor, admin"); return
+        await message.answer("Uso: /rol ID ROL\nRoles: DUEÑO, OWNER, ADMIN, SOCIO, USUARIO"); return
     try: target_id = int(parts[1])
     except ValueError: await message.answer("❌ ID inválido."); return
     if target_id == settings.OWNER_ID: await message.answer("❌ El Owner está protegido."); return
@@ -1106,10 +1144,11 @@ async def cmd_ban(message: Message, session: AsyncSession, current_user: User | 
     if target_id == settings.OWNER_ID: await message.answer("❌ El Owner está protegido."); return
     target = (await session.execute(select(User).where(User.telegram_id == target_id).with_for_update())).scalar_one_or_none()
     if not target: await message.answer("❌ Usuario no encontrado."); return
-    if target.role == UserRole.ADMIN and not is_owner(actor): await message.answer("❌ Solo el Owner puede restringir a un Administrador."); return
+    if target.role in (UserRole.ADMIN, UserRole.OWNER) and not is_owner(actor): await message.answer("❌ Solo el Owner puede restringir a un Administrador u Owner."); return
     target.is_banned = True; target.ban_reason = parts[2].strip() if len(parts) == 3 else "Sin motivo especificado"
-    await log_event(session, actor.telegram_id, "user_ban", str(target_id), target.ban_reason)
-    await session.commit(); await message.answer(f"✅ Usuario restringido: {name_of(target)}")
+    await log_event(session, actor.telegram_id, "user_ban_permanent", str(target_id), target.ban_reason)
+    await session.commit()
+    await message.answer(f"✅ Baneo permanente aplicado a {name_of(target)}.\n\nEl usuario no podrá usar comandos, menú ni botones hasta un /desban explícito.\n📞 Soporte: {settings.SUPPORT_URL}")
 
 
 @router.message(Command("desban", ignore_case=True))
@@ -1145,7 +1184,7 @@ async def cmd_estadisticas(message: Message, session: AsyncSession, current_user
 async def cmd_agregas(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not can_manage_products(actor):
-        await message.answer("❌ Solo Vendedores, Administradores u Owner pueden crear productos.")
+        await message.answer("❌ Solo ADMIN, OWNER o DUEÑO pueden crear productos.")
         return
     await state.clear()
     await state.set_state(ProductFlow.name)
@@ -1185,7 +1224,7 @@ async def cmd_stock(message: Message, session: AsyncSession, current_user: User 
 async def cmd_update_stock(message: Message, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not can_manage_products(actor):
-        await message.answer("❌ Solo Vendedores, Administradores u Owner pueden modificar stock.")
+        await message.answer("❌ Solo ADMIN, OWNER o DUEÑO pueden modificar stock.")
         return
     parts = (message.text or "").split()
     if len(parts) < 3:
@@ -1261,7 +1300,7 @@ async def cmd_saldo(message: Message, bot: Bot, session: AsyncSession, current_u
 async def cmd_key(message: Message, bot: Bot, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
     if not can_deliver_keys(actor):
-        await message.answer("❌ Solo Vendedores, Administradores u Owner pueden entregar Keys.")
+        await message.answer("❌ Solo ADMIN, OWNER o DUEÑO pueden entregar Keys.")
         return
     parts = (message.text or "").split(maxsplit=2)
     if len(parts) != 3 or not parts[2].strip():
@@ -1949,7 +1988,7 @@ async def check_admin(callback: CallbackQuery, session: AsyncSession, current_us
 @router.callback_query(F.data == "admin:home")
 async def admin_menu(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     user = await check_admin(callback, session, current_user)
-    if user: await edit_or_answer(callback, "⚙️ <b>PANEL ADMIN</b>\n\nSelecciona una función:", admin_home(user.role == UserRole.OWNER, is_admin(user)))
+    if user: await edit_or_answer(callback, "⚙️ <b>PANEL ADMIN</b>\n\nSelecciona una función:", admin_home(is_owner(user), is_admin(user)))
 
 
 @router.callback_query(F.data == "owner:home")
@@ -2133,11 +2172,14 @@ async def admin_ban_apply(callback: CallbackQuery, bot: Bot, session: AsyncSessi
     _, _, action, raw = callback.data.split(":")
     target = (await session.execute(select(User).where(User.telegram_id == int(raw)).with_for_update())).scalar_one_or_none()
     if not target: await callback.answer("Usuario no encontrado.", show_alert=True); return
-    if target.telegram_id == settings.OWNER_ID or (target.role == UserRole.ADMIN and not is_owner(actor)):
+    if target.telegram_id == settings.OWNER_ID or (target.role in (UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO) and not is_owner(actor)):
         await callback.answer("Ese usuario está protegido.", show_alert=True); return
-    target.is_banned = action == "on"; target.ban_reason = "Restricción administrativa" if target.is_banned else None
-    await log_event(session, actor.telegram_id, "ban_change", raw, action); await session.commit()
-    await bot.send_message(target.telegram_id, "🚫 Tu acceso a LXZ STORE BEST ha sido restringido." if target.is_banned else "✅ Tu acceso a LXZ STORE BEST ha sido restablecido.")
+    target.is_banned = action == "on"; target.ban_reason = "Restricción administrativa permanente" if target.is_banned else None
+    await log_event(session, actor.telegram_id, "user_ban_permanent" if target.is_banned else "user_unban", raw, action); await session.commit()
+    if target.is_banned:
+        await bot.send_message(target.telegram_id, BANNED_TEXT, reply_markup=BANNED_MARKUP, disable_web_page_preview=True)
+    else:
+        await bot.send_message(target.telegram_id, "✅ Tu acceso a LXZ STORE ha sido restablecido.")
     await edit_or_answer(callback, "✅ Estado de seguridad actualizado.", nav(True, "admin:home"))
 
 
@@ -2154,7 +2196,7 @@ async def admin_products(callback: CallbackQuery, state: FSMContext, session: As
 @router.callback_query(F.data == "admin:product:new")
 async def product_new(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     await state.clear(); await state.set_state(ProductFlow.name); await edit_or_answer(callback, "➕ <b>NUEVO PRODUCTO</b>\n\nEscribe el nombre:")
 
 
@@ -2186,7 +2228,7 @@ async def product_delivery(message: Message, state: FSMContext, session: AsyncSe
 @router.callback_query(F.data.startswith("admin:product:stock:"))
 async def product_stock_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     await state.set_state(ProductEdit.value); await state.update_data(edit="stock", product_id=int(callback.data.split(":")[3]))
     await edit_or_answer(callback, "📊 Escribe el nuevo stock entero (0 o más):")
 
@@ -2194,7 +2236,7 @@ async def product_stock_prompt(callback: CallbackQuery, state: FSMContext, sessi
 @router.callback_query(F.data.startswith("admin:product:price:"))
 async def product_price_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     await state.set_state(ProductEdit.value); await state.update_data(edit="price", product_id=int(callback.data.split(":")[3]))
     await edit_or_answer(callback, "💵 Escribe el nuevo precio mayor que cero:")
 
@@ -2202,7 +2244,7 @@ async def product_price_prompt(callback: CallbackQuery, state: FSMContext, sessi
 @router.callback_query(F.data.startswith("admin:product:image:"))
 async def product_image_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     await state.set_state(ProductEdit.value); await state.update_data(edit="image", product_id=int(callback.data.split(":")[3]))
     await edit_or_answer(callback, "🖼️ Envía la nueva imagen para este producto (o envía '-' para eliminar la imagen actual):")
 
@@ -2210,7 +2252,7 @@ async def product_image_prompt(callback: CallbackQuery, state: FSMContext, sessi
 @router.callback_query(F.data.startswith("admin:product:delivery:"))
 async def product_delivery_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     await state.set_state(ProductEdit.value); await state.update_data(edit="delivery", product_id=int(callback.data.split(":")[3]))
     await edit_or_answer(callback, "📦 Escribe los nuevos datos de entrega (cuentas, enlaces, instrucciones) o envía '-' para dejarlos vacíos:")
 
@@ -2271,7 +2313,7 @@ async def admin_product_detail(callback: CallbackQuery, session: AsyncSession, c
 @router.callback_query(F.data.startswith("admin:product:toggle:"))
 async def product_toggle(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[3])).with_for_update())).scalar_one_or_none()
     if not product:
         await callback.answer("Producto inexistente.", show_alert=True)
@@ -2289,7 +2331,7 @@ async def product_toggle(callback: CallbackQuery, session: AsyncSession, current
 @router.callback_query(F.data.startswith("admin:product:delete:"))
 async def product_delete(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not can_manage_products(actor): await callback.answer("Solo Vendedores, Administradores u Owner.", show_alert=True); return
+    if not can_manage_products(actor): await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True); return
     product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[3])).with_for_update())).scalar_one_or_none()
     if product: product.is_active = False; await log_event(session, actor.telegram_id, "product_delete", str(product.id), "archived"); await session.commit()
     await edit_or_answer(callback, "✅ Producto archivado. Las compras históricas se conservan.", nav(True, "admin:products"))
@@ -2386,7 +2428,7 @@ class RankFlow(StatesGroup):
 async def owner_admins(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
     if not actor or not is_owner(actor): return
-    staff = (await session.execute(select(User).where(User.role.in_([UserRole.SUPPORT, UserRole.SELLER, UserRole.ADMIN, UserRole.OWNER])))).scalars().all()
+    staff = (await session.execute(select(User).where(User.role.in_([UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO])))).scalars().all()
     await state.set_state(RankFlow.target)
     await edit_or_answer(callback, "⚙️ <b>EQUIPO Y RANGOS</b>\n\n" + ("\n".join(f"• {name_of(a)} · {a.telegram_id} · {a.role.value} · {a.rank_title or 'Sin rango'}" for a in staff)) + "\n\nEscribe el ID de Telegram del usuario al que deseas cambiarle el rol o rango, o /start.")
 
@@ -2402,7 +2444,7 @@ async def owner_rank_target(message: Message, state: FSMContext, session: AsyncS
     if not target: await message.answer("❌ Usuario no encontrado."); return
     await state.update_data(target=target_id)
     await state.set_state(RankFlow.role)
-    roles = kb([[("Admin", "role:admin", None), ("Vendedor", "role:seller", None)], [("Soporte", "role:support", None), ("VIP", "role:vip", None)], [("Usuario Normal", "role:user", None)]])
+    roles = kb([[("DUEÑO", "role:dueno", None), ("OWNER", "role:owner", None)], [("ADMIN", "role:admin", None), ("SOCIO", "role:socio", None)], [("USUARIO", "role:usuario", None)]])
     await message.answer(f"👤 {name_of(target)}\nRol actual: {target.role.value}\n\nSelecciona el nuevo rol del sistema:", reply_markup=roles)
 
 @router.callback_query(F.data.startswith("role:"))
@@ -2411,10 +2453,18 @@ async def owner_rank_role(callback: CallbackQuery, state: FSMContext, session: A
     if not is_owner(actor): await callback.answer("Solo Owner.", show_alert=True); return
     data = await state.get_data()
     if not data.get("target"): await callback.answer("Expirado.", show_alert=True); return
-    role_val = callback.data.split(":")[1]
-    await state.update_data(role=role_val)
+    role_key = callback.data.split(":")[1]
+    role_options = {
+        "dueno": UserRole.DUENO, "owner": UserRole.OWNER,
+        "admin": UserRole.ADMIN, "socio": UserRole.SOCIO,
+        "usuario": UserRole.USUARIO,
+    }
+    selected_role = role_options.get(role_key)
+    if selected_role is None:
+        await callback.answer("Rol inválido.", show_alert=True); return
+    await state.update_data(role=selected_role.value)
     await state.set_state(RankFlow.title)
-    await edit_or_answer(callback, f"Rol seleccionado: {role_val}\n\nAhora escribe el Rango visible para este usuario (ej. 'Moderador', 'Socio Élite') o escribe '-' para dejarlo sin rango visible.")
+    await edit_or_answer(callback, f"Rol seleccionado: {selected_role.value}\n\nAhora escribe el Rango visible para este usuario (ej. 'Moderador', 'Socio Élite') o escribe '-' para dejarlo sin rango visible.")
 
 @router.message(RankFlow.title, F.text)
 async def owner_rank_title(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
