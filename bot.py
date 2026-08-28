@@ -1158,23 +1158,6 @@ async def cmd_rol(message: Message, session: AsyncSession, current_user: User | 
     await session.commit(); await message.answer(f"✅ Rol actualizado.\n\n👤 {name_of(target)}\n🎖️ Rol: {target.role.value}")
 
 
-@router.message(Command("rango", ignore_case=True))
-async def cmd_rango(message: Message, session: AsyncSession, current_user: User | None = None):
-    actor = await event_user(message, session, current_user)
-    if not is_owner(actor):         await message.answer("❌ Solo DUEÑO puede cambiar rangos."); return
-    parts = (message.text or "").split(maxsplit=2)
-    if len(parts) != 3 or not parts[2].strip() or len(parts[2].strip()) > 64:
-        await message.answer("Uso: /rango ID NOMBRE_DEL_RANGO\nEjemplo: /rango 123456 Socio Élite"); return
-    try: target_id = int(parts[1])
-    except ValueError: await message.answer("❌ ID inválido."); return
-    if target_id == settings.OWNER_ID: await message.answer("❌ El Owner está protegido."); return
-    target = (await session.execute(select(User).where(User.telegram_id == target_id).with_for_update())).scalar_one_or_none()
-    if not target: await message.answer("❌ Usuario no encontrado."); return
-    target.rank_title = None if parts[2].strip() == "-" else parts[2].strip()
-    await log_event(session, actor.telegram_id, "rank_change", str(target_id), target.rank_title or "cleared")
-    await session.commit(); await message.answer(f"✅ Rango actualizado para {name_of(target)}: {target.rank_title or 'sin rango'}")
-
-
 @router.message(Command("ban", ignore_case=True))
 async def cmd_ban(message: Message, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
@@ -2311,7 +2294,7 @@ async def admin_ban_apply(callback: CallbackQuery, bot: Bot, session: AsyncSessi
 @router.callback_query(F.data == "admin:products")
 async def admin_products(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not actor: return
+    if not is_owner_role(actor): return
     products = (await session.execute(select(Product).order_by(Product.id.desc()).limit(20))).scalars().all()
     rows = [[(f"{'🟢' if p.is_active else '🔴'} {p.name[:28]} · {m(p.price)} · stock {p.stock}", f"admin:product:{p.id}", None)] for p in products]
     rows.append([("➕ Crear producto", "admin:product:new", None), ("⬅️ Panel", "admin:home", None)] if can_manage_products(actor) else [("⬅️ Panel", "admin:home", None)])
@@ -2485,7 +2468,7 @@ async def topup_view(callback: CallbackQuery, session: AsyncSession, current_use
 @router.callback_query(F.data == "admin:coupons")
 async def admin_coupons(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not is_admin(actor): await callback.answer("Solo Administradores u Owner.", show_alert=True); return
+    if not is_owner_role(actor): await callback.answer("Solo OWNER o DUEÑO.", show_alert=True); return
     coupons = (await session.execute(select(Coupon).order_by(Coupon.id.desc()).limit(15))).scalars().all()
     await state.set_state(CouponAdminFlow.code)
     await edit_or_answer(callback, "🎟️ <b>CUPONES</b>\n\n" + ("\n".join(f"{c.code} · {'activo' if c.is_active else 'inactivo'} · {c.used_count}/{c.usage_limit or '∞'}" for c in coupons) if coupons else "No hay cupones.") + "\n\nEscribe un código nuevo para crearlo, o /start.")
@@ -2503,7 +2486,7 @@ async def admin_coupon_limit(message: Message, state: FSMContext):
 @router.message(CouponAdminFlow.expiry, F.text)
 async def admin_coupon_expiry(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
-    if not is_admin(actor): await state.clear(); return
+    if not is_owner_role(actor): await state.clear(); return
     data = await state.get_data(); raw = data["discount"]; percent = money(raw[:-1]) if raw.endswith("%") else None; fixed = None if percent is not None else money(raw)
     if (percent is not None and not 0 < percent <= 100) or (fixed is not None and fixed <= 0): await message.answer("❌ Descuento inválido."); return
     expires = None
@@ -2517,14 +2500,14 @@ async def admin_coupon_expiry(message: Message, state: FSMContext, session: Asyn
 @router.callback_query(F.data == "admin:broadcast")
 async def admin_broadcast(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not actor or not is_admin(actor): await callback.answer("Solo Administradores.", show_alert=True); return
+    if not actor or not is_owner_role(actor): await callback.answer("Solo OWNER o DUEÑO.", show_alert=True); return
     await state.set_state(BroadcastFlow.message); await edit_or_answer(callback, "📢 <b>DIFUSIÓN</b>\n\nEnvía el texto, foto, vídeo, documento o sticker que deseas copiar a usuarios no baneados. Usa /start para salir.")
 
 
 @router.message(BroadcastFlow.message)
 async def broadcast_preview(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await event_user(message, session, current_user)
-    if not is_admin(actor): await state.clear(); return
+    if not is_owner_role(actor): await state.clear(); return
     await state.update_data(source_chat=message.chat.id, source_message=message.message_id)
     await message.answer("⚠️ ¿Confirmar difusión a todos los usuarios activos?", reply_markup=kb([[ ("✅ Confirmar", "admin:broadcast:confirm", None), ("❌ Cancelar", "admin:home", None) ]]))
 
@@ -2532,7 +2515,7 @@ async def broadcast_preview(message: Message, state: FSMContext, session: AsyncS
 @router.callback_query(F.data == "admin:broadcast:confirm")
 async def broadcast_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
-    if not actor or not is_admin(actor): await callback.answer("Solo Administradores.", show_alert=True); return
+    if not actor or not is_owner_role(actor): await callback.answer("Solo OWNER o DUEÑO.", show_alert=True); return
     data = await state.get_data(); users = (await session.execute(select(User.telegram_id).where(User.is_banned.is_(False)))).scalars().all(); sent = failed = 0
     await callback.answer("Difusión iniciada")
     for telegram_id in users:
@@ -2547,7 +2530,6 @@ async def broadcast_confirm(callback: CallbackQuery, bot: Bot, state: FSMContext
 class RankFlow(StatesGroup):
     target = State()
     role = State()
-    title = State()
 
 @router.callback_query(F.data == "owner:admins")
 async def owner_admins(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
@@ -2587,26 +2569,18 @@ async def owner_rank_role(callback: CallbackQuery, state: FSMContext, session: A
     selected_role = role_options.get(role_key)
     if selected_role is None:
         await callback.answer("Rol inválido.", show_alert=True); return
-    await state.update_data(role=selected_role.value)
-    await state.set_state(RankFlow.title)
-    await edit_or_answer(callback, f"Rol seleccionado: {selected_role.value}\n\nAhora escribe el Rango visible para este usuario (ej. 'Moderador', 'Socio Élite') o escribe '-' para dejarlo sin rango visible.")
-
-@router.message(RankFlow.title, F.text)
-async def owner_rank_title(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
-    actor = await event_user(message, session, current_user)
-    if not is_owner(actor): await state.clear(); return
-    data = await state.get_data()
     target = (await session.execute(select(User).where(User.telegram_id == data["target"]).with_for_update())).scalar_one_or_none()
-    if not target: await message.answer("❌ Usuario no encontrado."); return
-    selected_role = UserRole(data["role"])
+    if not target:
+        await callback.answer("Usuario no encontrado.", show_alert=True)
+        return
     if selected_role == UserRole.DUENO:
-        await state.clear(); await message.answer("❌ DUEÑO solo puede ser el usuario configurado en OWNER_ID."); return
+        await callback.answer("DUEÑO solo puede ser el usuario configurado en OWNER_ID.", show_alert=True)
+        return
     target.role = selected_role
-    title = message.text.strip()
-    target.rank_title = None if title == "-" else title
-    await log_event(session, actor.telegram_id, "role_change", str(target.telegram_id), f"{target.role.value} · {target.rank_title}")
-    await session.commit(); await state.clear(); await message.answer(f"✅ Rol y rango de {name_of(target)} actualizados.", reply_markup=nav(True, "owner:home"))
-
+    await log_event(session, actor.telegram_id, "role_change", str(target.telegram_id), target.role.value)
+    await session.commit()
+    await state.clear()
+    await edit_or_answer(callback, f"✅ Rol actualizado para {name_of(target)}.\n\n🎖️ Rango: {target.role.value}", nav(True, "owner:home"))
 
 @router.callback_query(F.data == "owner:logs")
 async def owner_logs(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):

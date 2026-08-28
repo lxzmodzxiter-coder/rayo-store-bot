@@ -8,7 +8,6 @@ from bot import (
     async_session_maker,
     cmd_ban,
     cmd_desban,
-    cmd_rango,
     cmd_rol,
     engine,
     get_or_create_user,
@@ -50,10 +49,6 @@ async def main():
         await session.refresh(user)
         assert user.role == UserRole.SOCIO
         assert not is_staff(user) and not is_admin(user)
-
-        await cmd_rango(FakeMessage(owner_tg, "/rango 999 Socio Elite"), session, current_user=owner)
-        await session.refresh(user)
-        assert user.rank_title == "Socio Elite"
 
         banned_message = FakeMessage(owner_tg, "/ban 999 prueba")
         await cmd_ban(banned_message, session, current_user=owner)
