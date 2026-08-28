@@ -349,11 +349,10 @@ def kb(rows):
 
 def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
     rows = [
-        [("🛍️ VER CATALOGO SOCIOS", "menu:catalog", None)],
-        [("💳 Recargar Saldo", "menu:balance", None), ("🎟️ Canjear Cupón", "menu:coupons", None)],
-        [("👤 Mi Perfil / Historial", "menu:profile", None), ("💎 PREMIUN (10% OFF)", "menu:premium", None)],
-        [("🤝 SOCIO (20% OFF)", "menu:partner", None)],
-        [("📞 Soporte Directo", None, "https://t.me/Lxz_Modz")],
+        [("🛍️ Catálogo de Productos", "menu:catalog", None)],
+        [("💳 Recargar Saldo", "menu:balance", None), ("👤 Mi Perfil", "menu:profile", None)],
+        [("💎 PREMIUN (10% OFF)", "menu:premium", None), ("🤝 SOCIO (20% OFF)", "menu:partner", None)],
+        [("🎟️ Canjear Cupón", "menu:coupons", None), ("📞 Soporte", None, "https://t.me/Lxz_Modz")],
     ]
     if channel_url:
         rows[-1].append(("📢 Canal Oficial", None, channel_url))
@@ -377,7 +376,7 @@ def nav(home: bool = True, back: str = "menu:home") -> InlineKeyboardMarkup:
 
 def categories(categories: list[str]) -> InlineKeyboardMarkup:
     rows = [[(CATEGORY_LABELS.get(name, name), f"cat:{name}", None)] for name in categories]
-    rows.append([("⬅️ Regresar al Inicio", "menu:home", None)])
+    rows.append([("🏠 Inicio", "menu:home", None)])
     return kb(rows)
 
 
@@ -390,7 +389,7 @@ def product_list(items, page: int, pages: int, category: str) -> InlineKeyboardM
         pager.append(("▶️ Siguiente", f"products:{category}:{page+1}", None))
     if pager:
         rows.append(pager)
-    rows.append([("⬅️ Volver a las Categorías", "menu:catalog", None)])
+    rows.append([("⬅️ Categorías", "menu:catalog", None), ("🏠 Inicio", "menu:home", None)])
     return kb(rows)
 
 
@@ -402,7 +401,7 @@ def product_detail(product_id: int, back: str, can_buy: bool = True, variants: l
                 rows.append([(f"⏳ {v_name} | {v_price}", f"buy:{product_id}:{v_name}", None)])
         else:
             rows.append([("🛒 Comprar", f"buy:{product_id}:default", None)])
-    rows.append([("⬅️ Volver a Productos", back, None)])
+    rows.append([("⬅️ Productos", back, None), ("🏠 Inicio", "menu:home", None)])
     return kb(rows)
 
 
@@ -998,11 +997,11 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
         admin_commands += "\n<code>/broadcast</code> · <code>/saldo ID CANTIDAD USD</code>"
     role_display = f"\n🎖️ <b>Rango:</b> {user.role.value}"
     benefit_display = "\n♾️ <b>Beneficio:</b> Saldo infinito" if is_dueno(user) else ""
-    text = (f"💬 <b>RESELLERS STORE EXCLUSIVE</b> 🛍️\n\n"
+    text = (f"⚡ <b>LXZ STORE BEST</b> ⚡\n\n"
             f"👤 <b>Cliente:</b> {name_of(user)}\n"
             f"🆔 <b>ID de Cuenta:</b> <code>{user.telegram_id}</code>{role_display}\n"
             f"💰 <b>Saldo Disponible:</b> {balance_display(user)}{benefit_display}\n\n"
-            f"<b>¿Qué vamos a hacer hoy, cariño? Elige una opción:</b>{admin_commands}")
+            f"Bienvenido a tu tienda de confianza. Selecciona una opción del menú para continuar:{admin_commands}")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     try:
         if isinstance(target, CallbackQuery):
@@ -1118,17 +1117,18 @@ async def cmd_comandos(message: Message, session: AsyncSession, current_user: Us
     user = await event_user(message, session, current_user)
     if not user: return
     text = ("📚 <b>COMANDOS DISPONIBLES</b>\n\n"
-            "/start — abrir el menú principal\n"
-            "/perfil — consultar tu saldo, rango y estadísticas\n"
-            "Usa los botones para catálogo, compras, recargas, cupones y soporte.")
+            "<code>/start</code> — Menú principal\n"
+            "<code>/perfil</code> — Consultar saldo y beneficios\n"
+            "<code>/miscompras</code> — Historial de compras\n"
+            "<code>/rangos</code> — Ver información de roles")
     if is_staff(user):
-        text += "\n\n🔐 <b>COMANDOS STAFF</b>\n/stock — inventario\n/perfil — perfil de cuenta"
+        text += "\n\n🔐 <b>COMANDOS STAFF</b>\n<code>/stock</code> — Consultar inventario"
     if can_manage_products(user):
-        text += "\n/agregas — crear producto\n/actualizarstock — actualizar inventario\n/key ID KEY — entregar una Key"
+        text += "\n<code>/agregas</code> — Crear un nuevo producto\n<code>/actualizarstock</code> — Modificar inventario\n<code>/key ID KEY</code> — Entregar una Key manualmente"
     if is_owner_role(user):
-        text += "\n/estadisticas — métricas de la tienda"
+        text += "\n<code>/estadisticas</code> — Métricas de la tienda"
     if is_owner(user):
-        text += "\n/broadcast — difusión\n/saldo ID CANTIDAD USD — entregar saldo\n/rol ID ROL — cambiar rol\n/ban ID MOTIVO y /desban ID — seguridad"
+        text += "\n<code>/broadcast</code> — Difusión global\n<code>/saldo ID CANTIDAD USD</code> — Agregar o quitar saldo\n<code>/rol ID ROL</code> — Cambiar rango\n<code>/ban ID MOTIVO</code> — Bloquear acceso\n<code>/desban ID</code> — Restaurar acceso"
     await message.answer(text)
 
 
@@ -1361,11 +1361,11 @@ async def cmd_key(message: Message, bot: Bot, session: AsyncSession, current_use
     await log_event(session, actor.telegram_id, "key_delivery", str(target.telegram_id), f"{purchase.order_id} · {duration}")
     await session.commit()
     safe_key = escape(key_value)
-    admin_text = f"✅ <b>KEY ENTREGADA :</b>\n\n👤 Usuario: {name_of(target)}\n🆔 ID: <code>{target.telegram_id}</code>\n🔑 <b>KEY :</b> <code>{safe_key}</code>\n⏱️ <b>DURACIÓN :</b> {escape(duration)}"
+    admin_text = f"✅ <b>KEY ENTREGADA</b>\n\n👤 Usuario: {name_of(target)}\n🆔 ID: <code>{target.telegram_id}</code>\n📦 Producto: {purchase.product_name}\n🔑 <b>KEY:</b> <code>{safe_key}</code>\n⏱️ <b>DURACIÓN:</b> {escape(duration)}"
     await message.answer(admin_text)
     if target.telegram_id != actor.telegram_id:
         try:
-            await bot.send_message(target.telegram_id, f"✅ <b>KEY ENTREGADA :</b>\n\n🔑 <b>KEY :</b> <code>{safe_key}</code>\n\n⏱️ <b>DURACIÓN :</b> {escape(duration)}\n\n🙏 GRACIAS POR TU COMPRA Y TU CONFIANZA")
+            await bot.send_message(target.telegram_id, f"✅ <b>KEY ENTREGADA</b>\n\n📦 Producto: {purchase.product_name}\n🔑 <b>KEY:</b> <code>{safe_key}</code>\n⏱️ <b>DURACIÓN:</b> {escape(duration)}\n\n🙏 GRACIAS POR TU COMPRA Y TU CONFIANZA EN LXZ STORE BEST")
         except Exception:
             logger.exception("No se pudo notificar al usuario %s sobre la Key entregada.", target.telegram_id)
 
@@ -1569,7 +1569,7 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         if state:
             await state.clear()
         delivery = f"\n\n📦 <b>DATOS DE ENTREGA:</b>\n<code>{product.delivery_data}</code>" if product.delivery_data else "\n\n📦 Entrega: el administrador procesará tu pedido."
-        text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
+        text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)} USD\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
         await callback.message.edit_text(text, reply_markup=nav())
         await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product_name_full}\n💵 {m(total)}\n🧾 {order_id}")
     except Exception:
@@ -1583,8 +1583,19 @@ async def menu_profile(callback: CallbackQuery, session: AsyncSession, current_u
     user = await event_user(callback, session, current_user)
     if not user:
         return
-    text = f"👤 <b>MI PERFIL</b>\n\n📌 Nombre: {name_of(user)}\n🔖 Username: @{user.username or '—'}\n🆔 ID: <code>{user.telegram_id}</code>\n🎖️ Rango: {user.role.value}\n💰 Saldo: <b>{balance_display(user)}</b>\n💎 PREMIUN: {'Activo · 10% OFF' if user.role == UserRole.PREMIUN or active_premium(user) else 'Inactivo'}\n🤝 SOCIO: {'Activo · 20% OFF' if user.role == UserRole.SOCIO or user.is_partner else 'Inactivo'}\n📦 Compras: {user.purchases_count}\n💵 Total gastado: {m(user.total_spent)}\n🎁 Referidos: {user.referrals_count}\n📅 Registro: {now_text(user.created_at)}\n🚫 Estado: {'Restringido' if user.is_banned else 'Activo'}"
-    await edit_or_answer(callback, text, nav())
+    text = (f"👤 <b>PERFIL DE CUENTA</b>\n\n"
+            f"🆔 <b>ID:</b> <code>{user.telegram_id}</code>\n"
+            f"👤 <b>Usuario:</b> {name_of(user)}\n"
+            f"🎖️ <b>Rango:</b> {user.role.value}\n"
+            f"💰 <b>Saldo:</b> {balance_display(user)}\n\n"
+            f"<b>ESTADÍSTICAS</b>\n"
+            f"📦 Compras: {user.purchases_count}\n"
+            f"💵 Gastado: {m(user.total_spent)} USD\n"
+            f"📅 Registro: {now_text(user.created_at)}\n\n"
+            f"<b>BENEFICIOS</b>\n"
+            f"💎 PREMIUN: {'Activo · 10% OFF' if user.role == UserRole.PREMIUN or active_premium(user) else 'Inactivo'}\n"
+            f"🤝 SOCIO: {'Activo · 20% OFF' if user.role == UserRole.SOCIO or user.is_partner else 'Inactivo'}")
+    await edit_or_answer(callback, text, kb([[("📦 Historial de Compras", "menu:purchases", None)], [("🏠 Inicio", "menu:home", None)]]))
 
 
 async def render_purchases(callback: CallbackQuery, session: AsyncSession, user: User, page: int):
@@ -1592,10 +1603,10 @@ async def render_purchases(callback: CallbackQuery, session: AsyncSession, user:
     pages = max(1, math.ceil(len(items) / PAGE_SIZE))
     page = max(0, min(page, pages - 1))
     current = items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-    text = f"📦 <b>MIS COMPRAS</b> · Página {page + 1}/{pages}\n\n" + ("\n".join(f"🧾 <code>{p.order_id}</code> · {p.product_name} · {m(p.price)}" for p in current) if current else "Aún no tienes compras.")
+    text = f"📦 <b>MIS COMPRAS</b> · Página {page + 1}/{pages}\n\n" + ("\n".join(f"🧾 <code>{p.order_id}</code>\n📦 {p.product_name} · {m(p.price)} USD\n" for p in current) if current else "Aún no tienes compras.")
     rows = []
     for p in current:
-        rows.append([(f"🧾 {p.order_id} · {p.product_name[:24]}", f"purchase:{p.id}", None)])
+        rows.append([(f"🔍 Ver {p.order_id}", f"purchase:{p.id}", None)])
     pager = []
     if page > 0: pager.append(("◀️ Anterior", f"purchases:{page-1}", None))
     if page + 1 < pages: pager.append(("▶️ Siguiente", f"purchases:{page+1}", None))
@@ -1623,8 +1634,8 @@ async def purchase_detail_view(callback: CallbackQuery, session: AsyncSession, c
     if not purchase:
         await callback.answer("Compra no encontrada.", show_alert=True); return
     delivery = f"\n\n📦 Datos: <code>{purchase.delivery_data}</code>" if purchase.delivery_data else ""
-    text = f"🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)}\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
-    markup = nav("", "menu:purchases")
+    text = f"🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)} USD\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
+    markup = kb([[("⬅️ Historial", "menu:purchases", None), ("🏠 Inicio", "menu:home", None)]])
     try:
         await callback.message.delete()
     except TelegramBadRequest:
