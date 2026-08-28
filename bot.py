@@ -524,8 +524,9 @@ class DatabaseMiddleware(BaseMiddleware):
 
 # Middleware de autenticación
 BANNED_TEXT = (
+    "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐀𝐂𝐂𝐄𝐒𝐒 𝐃𝐄𝐍𝐈𝐄𝐃 ❱\n\n"
     "🚫 <b>ACCESO BLOQUEADO</b>\n\n"
-    "Tu cuenta tiene una restricción permanente en LXZ STORE.\n"
+    "Tu cuenta tiene una restricción permanente en el sistema.\n"
     "No puedes usar comandos, abrir el menú ni utilizar botones.\n\n"
     "Para solicitar una revisión o desbaneo, contacta a soporte: "
     f"{settings.SUPPORT_URL}"
@@ -995,13 +996,15 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
         admin_commands += "\n<code>/agregas</code> · <code>/actualizarstock</code> · <code>/key ID KEY</code>"
     if is_owner_role(user):
         admin_commands += "\n<code>/broadcast</code> · <code>/saldo ID CANTIDAD USD</code>"
-    role_display = f"\n🎖️ <b>Rango:</b> {user.role.value}"
-    benefit_display = "\n♾️ <b>Beneficio:</b> Saldo infinito" if is_dueno(user) else ""
-    text = (f"⚡ <b>LXZ STORE BEST</b> ⚡\n\n"
-            f"👤 <b>Cliente:</b> {name_of(user)}\n"
-            f"🆔 <b>ID de Cuenta:</b> <code>{user.telegram_id}</code>{role_display}\n"
-            f"💰 <b>Saldo Disponible:</b> {balance_display(user)}{benefit_display}\n\n"
-            f"Bienvenido a tu tienda de confianza. Selecciona una opción del menú para continuar:{admin_commands}")
+    role_display = f"\n🗝 𝐏𝐞𝐫𝐦𝐢𝐬𝐨𝐬: {user.role.value} — 𝐀𝐂𝐂𝐄𝐒𝐒"
+    benefit_display = "\n♾️ 𝐁𝐞𝐧𝐞𝐟𝐢𝐜𝐢𝐨: Saldo infinito" if is_dueno(user) else ""
+    text = (f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐂𝐎𝐌𝐌𝐀𝐍𝐃 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n"
+            f"💮 ʟxᴢ • 𝐍𝐞𝐨-𝐒𝐲𝐬𝐭𝐞𝐦 • 𝐍𝐞𝐭𝐰𝐨𝐫𝐤 💮\n\n"
+            f"👤 𝐔𝐬𝐮𝐚𝐫𝐢𝐨: {name_of(user)} | <code>{user.telegram_id}</code>{role_display}\n"
+            f"💰 𝐒𝐚𝐥𝐝𝐨: {balance_display(user)}{benefit_display}\n\n"
+            f"🤖 ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐎𝐍𝐋𝐈𝐍𝐄\n"
+            f"⚡ 𝐕𝐞𝐥𝐨𝐜𝐢𝐝𝐚𝐝 • 🛡 𝐒𝐞𝐠𝐮𝐫𝐢𝐝𝐚𝐝 • 🎯 𝐏𝐫𝐞𝐜𝐢𝐬𝐢𝐨́𝐧\n\n"
+            f"🔥 「 𝐂𝐨𝐧𝐭𝐫𝐨𝐥𝐚 𝐞𝐥 𝐬𝐢𝐬𝐭𝐞𝐦𝐚 」 🔥{admin_commands}")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     try:
         if isinstance(target, CallbackQuery):
@@ -1096,7 +1099,13 @@ async def cmd_id(message: Message, session: AsyncSession, current_user: User | N
 
 @router.message(Command("rangos", ignore_case=True))
 async def cmd_rangos(message: Message):
-    await message.answer("🎖️ <b>ROLES Y RANGOS</b>\n\n🏆 DUEÑO: único propietario; saldo infinito y panel DUEÑO completo.\n👑 OWNER: panel OWNER reducido, sin gestión de rangos ni configuración total.\n🔐 ADMIN: panel ADMIN operativo, con menos opciones que OWNER y DUEÑO.\n🤝 SOCIO: 20% de descuento automático en compras.\n💎 PREMIUN: 10% de descuento automático en compras.\n👤 USUARIO: compras, recargas y funciones normales.")
+    await message.answer("❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐑𝐎𝐋𝐄𝐒 𝐘 𝐑𝐀𝐍𝐆𝐎𝐒 ❱\n\n"
+                         "🏆 <b>DUEÑO:</b> único propietario; saldo infinito y panel DUEÑO completo.\n"
+                         "👑 <b>OWNER:</b> panel OWNER reducido, sin gestión de rangos ni configuración total.\n"
+                         "🔐 <b>ADMIN:</b> panel ADMIN operativo, con menos opciones que OWNER y DUEÑO.\n"
+                         "🤝 <b>SOCIO:</b> 20% de descuento automático en compras.\n"
+                         "💎 <b>PREMIUN:</b> 10% de descuento automático en compras.\n"
+                         "👤 <b>USUARIO:</b> compras, recargas y funciones normales.")
 
 
 @router.message(Command("miscompras", ignore_case=True))
@@ -1116,13 +1125,13 @@ async def cmd_miscompras(message: Message, session: AsyncSession, current_user: 
 async def cmd_comandos(message: Message, session: AsyncSession, current_user: User | None = None):
     user = await event_user(message, session, current_user)
     if not user: return
-    text = ("📚 <b>COMANDOS DISPONIBLES</b>\n\n"
+    text = ("❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐂𝐎𝐌𝐌𝐀𝐍𝐃 𝐋𝐈𝐒𝐓 ❱\n\n"
             "<code>/start</code> — Menú principal\n"
             "<code>/perfil</code> — Consultar saldo y beneficios\n"
             "<code>/miscompras</code> — Historial de compras\n"
             "<code>/rangos</code> — Ver información de roles")
     if is_staff(user):
-        text += "\n\n🔐 <b>COMANDOS STAFF</b>\n<code>/stock</code> — Consultar inventario"
+        text += "\n\n🔐 <b>𝐂𝐎𝐌𝐀𝐍𝐃𝐎𝐒 𝐒𝐓𝐀𝐅𝐅</b>\n<code>/stock</code> — Consultar inventario"
     if can_manage_products(user):
         text += "\n<code>/agregas</code> — Crear un nuevo producto\n<code>/actualizarstock</code> — Modificar inventario\n<code>/key ID KEY</code> — Entregar una Key manualmente"
     if is_owner_role(user):
@@ -1583,16 +1592,15 @@ async def menu_profile(callback: CallbackQuery, session: AsyncSession, current_u
     user = await event_user(callback, session, current_user)
     if not user:
         return
-    text = (f"👤 <b>PERFIL DE CUENTA</b>\n\n"
-            f"🆔 <b>ID:</b> <code>{user.telegram_id}</code>\n"
-            f"👤 <b>Usuario:</b> {name_of(user)}\n"
-            f"🎖️ <b>Rango:</b> {user.role.value}\n"
-            f"💰 <b>Saldo:</b> {balance_display(user)}\n\n"
-            f"<b>ESTADÍSTICAS</b>\n"
+    text = (f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐔𝐒𝐄𝐑 𝐏𝐑𝐎𝐅𝐈𝐋𝐄 ❱\n\n"
+            f"👤 𝐔𝐬𝐮𝐚𝐫𝐢𝐨: {name_of(user)} | <code>{user.telegram_id}</code>\n"
+            f"🗝 𝐏𝐞𝐫𝐦𝐢𝐬𝐨𝐬: {user.role.value} — 𝐀𝐂𝐂𝐄𝐒𝐒\n"
+            f"💰 𝐒𝐚𝐥𝐝𝐨: {balance_display(user)}\n\n"
+            f"📊 <b>𝐄𝐒𝐓𝐀𝐃𝐈́𝐒𝐓𝐈𝐂𝐀𝐒</b>\n"
             f"📦 Compras: {user.purchases_count}\n"
             f"💵 Gastado: {m(user.total_spent)} USD\n"
             f"📅 Registro: {now_text(user.created_at)}\n\n"
-            f"<b>BENEFICIOS</b>\n"
+            f"🎁 <b>𝐁𝐄𝐍𝐄𝐅𝐈𝐂𝐈𝐎𝐒</b>\n"
             f"💎 PREMIUN: {'Activo · 10% OFF' if user.role == UserRole.PREMIUN or active_premium(user) else 'Inactivo'}\n"
             f"🤝 SOCIO: {'Activo · 20% OFF' if user.role == UserRole.SOCIO or user.is_partner else 'Inactivo'}")
     await edit_or_answer(callback, text, kb([[("📦 Historial de Compras", "menu:purchases", None)], [("🏠 Inicio", "menu:home", None)]]))
@@ -1603,7 +1611,7 @@ async def render_purchases(callback: CallbackQuery, session: AsyncSession, user:
     pages = max(1, math.ceil(len(items) / PAGE_SIZE))
     page = max(0, min(page, pages - 1))
     current = items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-    text = f"📦 <b>MIS COMPRAS</b> · Página {page + 1}/{pages}\n\n" + ("\n".join(f"🧾 <code>{p.order_id}</code>\n📦 {p.product_name} · {m(p.price)} USD\n" for p in current) if current else "Aún no tienes compras.")
+    text = f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐇𝐈𝐒𝐓𝐎𝐑𝐘 ❱\n\n📦 <b>MIS COMPRAS</b> · Página {page + 1}/{pages}\n\n" + ("\n".join(f"🧾 <code>{p.order_id}</code>\n📦 {p.product_name} · {m(p.price)} USD\n" for p in current) if current else "Aún no tienes compras.")
     rows = []
     for p in current:
         rows.append([(f"🔍 Ver {p.order_id}", f"purchase:{p.id}", None)])
@@ -1634,7 +1642,7 @@ async def purchase_detail_view(callback: CallbackQuery, session: AsyncSession, c
     if not purchase:
         await callback.answer("Compra no encontrada.", show_alert=True); return
     delivery = f"\n\n📦 Datos: <code>{purchase.delivery_data}</code>" if purchase.delivery_data else ""
-    text = f"🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)} USD\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
+    text = f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐃𝐄𝐓𝐀𝐈𝐋 ❱\n\n🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)} USD\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
     markup = kb([[("⬅️ Historial", "menu:purchases", None), ("🏠 Inicio", "menu:home", None)]])
     try:
         await callback.message.delete()
@@ -2091,11 +2099,11 @@ async def admin_menu(callback: CallbackQuery, session: AsyncSession, current_use
     user = await check_admin(callback, session, current_user)
     if user:
         if is_dueno(user):
-            await edit_or_answer(callback, "🏆 <b>PANEL DUEÑO</b>\n\nControl total de la tienda:", admin_home(UserRole.DUENO))
+            await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐃𝐔𝐄𝐍̃𝐎 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n🏆 <b>PANEL DUEÑO</b>\nControl total de la tienda:", admin_home(UserRole.DUENO))
         elif user.role == UserRole.OWNER:
-            await edit_or_answer(callback, "👑 <b>PANEL OWNER</b>\n\nPanel operativo reducido:", admin_home(UserRole.OWNER))
+            await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐎𝐖𝐍𝐄𝐑 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n👑 <b>PANEL OWNER</b>\nPanel operativo reducido:", admin_home(UserRole.OWNER))
         elif user.role == UserRole.ADMIN:
-            await edit_or_answer(callback, "🔐 <b>PANEL ADMIN</b>\n\nPanel operativo básico:", admin_home(UserRole.ADMIN))
+            await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐀𝐃𝐌𝐈𝐍 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n🔐 <b>PANEL ADMIN</b>\nPanel operativo básico:", admin_home(UserRole.ADMIN))
 
 
 @router.callback_query(F.data == "owner:home")
@@ -2103,9 +2111,9 @@ async def owner_menu(callback: CallbackQuery, session: AsyncSession, current_use
     user = await check_admin(callback, session, current_user)
     if user and is_owner_role(user):
         if is_dueno(user):
-            await edit_or_answer(callback, "🏆 <b>PANEL DUEÑO</b>\n\nControl total de la tienda:", admin_home(UserRole.DUENO))
+            await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐃𝐔𝐄𝐍̃𝐎 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n🏆 <b>PANEL DUEÑO</b>\nControl total de la tienda:", admin_home(UserRole.DUENO))
         else:
-            await edit_or_answer(callback, "👑 <b>PANEL OWNER</b>\n\nPanel operativo reducido:", admin_home(UserRole.OWNER))
+            await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐎𝐖𝐍𝐄𝐑 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n👑 <b>PANEL OWNER</b>\nPanel operativo reducido:", admin_home(UserRole.OWNER))
 
 
 @router.callback_query(F.data == "admin:stats")
