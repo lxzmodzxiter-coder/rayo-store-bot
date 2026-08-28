@@ -44,7 +44,7 @@ async def main():
     async with async_session_maker() as session:
         seller_tg = TelegramUser(id=200, is_bot=False, first_name="Seller")
         seller = await get_or_create_user(seller_tg, session)
-        seller.role = UserRole.ADMIN
+        seller.role = UserRole.OWNER
         customer_tg = TelegramUser(id=999, is_bot=False, first_name="Customer")
         customer = await get_or_create_user(customer_tg, session)
         product = Product(name="HG CHEATS", category="Android", description="7 Días | 7", price=Decimal("7.00"), stock=1, is_active=True)
