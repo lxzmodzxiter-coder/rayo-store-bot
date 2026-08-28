@@ -31,48 +31,42 @@ async def main():
         for name, variants in PRICE_CATALOG.items():
             assert by_name[name].price == Decimal(variants[0][1])
 
-        threshold = Decimal("10.00")
-        high_price = [product for product in products if product.price >= threshold]
-        low_price = [product for product in products if product.price < threshold]
-        assert high_price and low_price
-        assert all(product.stock == 5 and product.is_active for product in high_price)
-        assert all(product.stock == 0 and not product.is_active for product in low_price)
-        assert await session.get(StoreSetting, "initial_inventory_price_ge_10_v2")
+        assert products
+        assert all(product.stock == 5 and product.is_active for product in products)
+        assert await session.get(StoreSetting, "initial_inventory_all_products_stock_5_v3")
 
-        # Una nueva siembra no debe reponer ventas ni sobrescribir cambios
-        # manuales después de que la política de activación quedó marcada.
-        sold = high_price[0]
+        sold = products[0]
+        sold.sales_count = 1
         sold.stock = 3
-        manually_changed = low_price[0]
-        manually_changed.stock = 4
-        manually_changed.is_active = True
+        untouched = products[1]
+        untouched.stock = 2
+        untouched.is_active = False
         await session.commit()
 
         await seed_initial_products(session)
         persisted_sold = await session.get(Product, sold.id)
-        persisted_low = await session.get(Product, manually_changed.id)
+        persisted_untouched = await session.get(Product, untouched.id)
         assert persisted_sold.stock == 3
         assert persisted_sold.is_active is True
-        assert persisted_low.stock == 4
-        assert persisted_low.is_active is True
+        assert persisted_untouched.stock == 2
+        assert persisted_untouched.is_active is False
 
-        # Si una base ya usaba la política v1, el cambio al umbral no repone
-        # el stock caro, pero sí retira el stock de los productos inferiores.
-        marker = await session.get(StoreSetting, "initial_inventory_price_ge_10_v2")
+        # Una activación posterior no repone ni reactiva productos que ya se vendieron.
+        marker = await session.get(StoreSetting, "initial_inventory_all_products_stock_5_v3")
         await session.delete(marker)
-        session.add(StoreSetting(key="initial_inventory_5_v1", value="5"))
-        sold.stock = 2
+        untouched.sales_count = 0
+        untouched.stock = 0
+        untouched.is_active = False
+        sold.stock = 1
         sold.is_active = True
-        manually_changed.stock = 4
-        manually_changed.is_active = True
         await session.commit()
         await seed_initial_products(session)
         migrated_sold = await session.get(Product, sold.id)
-        migrated_low = await session.get(Product, manually_changed.id)
-        assert migrated_sold.stock == 2
+        migrated_untouched = await session.get(Product, untouched.id)
+        assert migrated_sold.stock == 1
         assert migrated_sold.is_active is True
-        assert migrated_low.stock == 0
-        assert migrated_low.is_active is False
+        assert migrated_untouched.stock == 5
+        assert migrated_untouched.is_active is True
 
     print("CATALOG_OK")
 

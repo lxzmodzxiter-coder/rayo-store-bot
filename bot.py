@@ -479,11 +479,12 @@ def peru_payment_methods() -> InlineKeyboardMarkup:
     ])
 
 
-def topup_amounts(currency: str = "USD", rate: Decimal = Decimal(1)) -> InlineKeyboardMarkup:
+def topup_amounts(currency: str = "USD", rate: Decimal = Decimal(1), first_topup: bool = False) -> InlineKeyboardMarkup:
     rows = []
-    for index in range(0, len(TOPUP_AMOUNTS), 3):
+    available = [amount for amount in TOPUP_AMOUNTS if not first_topup or Decimal(str(amount)) >= FIRST_TOPUP_MINIMUM_USD]
+    for index in range(0, len(available), 3):
         row = []
-        for usd_amount in TOPUP_AMOUNTS[index:index + 3]:
+        for usd_amount in available[index:index + 3]:
             source_amount = money(Decimal(usd_amount) * rate)
             row.append((f"💵 {source_amount} {currency}", f"topup:amount:{source_amount}:{currency}:{usd_amount}", None))
         rows.append(row)
@@ -923,6 +924,13 @@ def active_premium(user: User) -> bool:
     return bool(user.is_premium and (not user.premium_until or user.premium_until > utcnow()))
 
 
+async def has_approved_topup(session: AsyncSession, user_id: int) -> bool:
+    return bool(await session.scalar(select(func.count(TopupRequest.id)).where(TopupRequest.user_id == user_id, TopupRequest.status == TopupStatus.APPROVED)))
+
+
+FIRST_TOPUP_MINIMUM_USD = Decimal("10.00")
+
+
 async def get_or_create_user(telegram_user, session: AsyncSession, current: User | None = None, start_arg: str | None = None) -> User:
     user = current or (await session.execute(select(User).where(User.telegram_id == telegram_user.id))).scalar_one_or_none()
     if user:
@@ -1037,25 +1045,17 @@ LEGACY_CATEGORY_MAP = {
 
 
 async def activate_initial_inventory_once(session: AsyncSession) -> None:
-    marker_key = "initial_inventory_price_ge_10_v2"
+    marker_key = "initial_inventory_all_products_stock_5_v3"
     if await session.get(StoreSetting, marker_key):
         return
     products = (await session.execute(select(Product))).scalars().all()
-    threshold = Decimal("10.00")
-    legacy_activation = await session.get(StoreSetting, "initial_inventory_5_v1")
     for product in products:
-        # El esquema mantiene un stock por producto; por eso el umbral usa
-        # el precio base (la primera variante), no el precio de cada variante.
-        if product.price < threshold:
-            product.stock = 0
-            product.is_active = False
-        elif not legacy_activation:
-            # En una base nueva, el inventario inicial real es de cinco.
+        # La nueva activación universal solo inicializa productos sin ventas.
+        # Así los productos vendidos no recuperan unidades en un reinicio.
+        if product.sales_count == 0:
             product.stock = 5
             product.is_active = True
-        # Si ya existía la política v1, se conserva el stock de los productos
-        # caros para no reponer unidades que pudieron venderse antes del v2.
-    session.add(StoreSetting(key=marker_key, value="base_price_ge_10_stock_5"))
+    session.add(StoreSetting(key=marker_key, value="all_products_stock_5"))
 
 
 async def seed_initial_products(session: AsyncSession) -> None:
@@ -1660,7 +1660,7 @@ async def purchase_detail_view(callback: CallbackQuery, session: AsyncSession, c
 async def menu_balance(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     user = await event_user(callback, session, current_user)
     if user:
-        text = f"💳 <b>RECARGAR SALDO USD</b>\n\nSaldo actual: <b>{balance_display(user)}</b>\n\n📍 <b>SELECCIONA TU MÉTODO O PAÍS PARA RECARGAR:</b>"
+        text = f"💳 <b>RECARGAR SALDO USD</b>\n\nSaldo actual: <b>{balance_display(user)}</b>\n\n📌 Primera recarga: mínimo <b>10 USD</b>. Después de una recarga aprobada: cualquier monto.\n\n📍 <b>SELECCIONA TU MÉTODO O PAÍS PARA RECARGAR:</b>"
         markup = topup_countries()
         try:
             await callback.message.delete()
@@ -1709,7 +1709,7 @@ async def topup_crypto_assets(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("topup:asset:"))
-async def topup_asset(callback: CallbackQuery, state: FSMContext):
+async def topup_asset(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     asset = callback.data.rsplit(":", 1)[1].upper()
     if asset not in {"USDC", "USDT"}:
         await callback.answer("Activo no disponible.", show_alert=True)
@@ -1718,9 +1718,11 @@ async def topup_asset(callback: CallbackQuery, state: FSMContext):
     if not data.get("country_name") or data.get("country") == "pe":
         await callback.answer("Selecciona primero un país internacional.", show_alert=True)
         return
-    await state.update_data(asset=asset, currency=asset, rate="1.00", minimum="1.00", maximum="10000.00")
+    await state.update_data(asset=asset, currency="USD", rate="1.00", minimum="1.00", maximum="10000.00")
     await state.set_state(TopupFlow.amount)
-    await edit_or_answer(callback, f"💱 <b>{asset}</b>\n\nPrimero selecciona el monto. Después verás la dirección de la red elegida.", topup_amounts(asset, Decimal(1)))
+    user = await event_user(callback, session, current_user)
+    first_topup = bool(user and not await has_approved_topup(session, user.id))
+    await edit_or_answer(callback, f"💱 <b>RECARGAR USD · {asset}</b>\n\nSelecciona el monto en USD. La primera recarga debe ser mínimo de 10 USD.", topup_amounts("USD", Decimal(1), first_topup))
 
 
 @router.callback_query(F.data.startswith("topup:network:"))
@@ -1742,18 +1744,20 @@ async def topup_network(callback: CallbackQuery, state: FSMContext):
                f"📥 Dirección: <code>{config['address']}</code>\n"
                f"💸 Comisión: {config['fee']}")
     data = await state.get_data()
-    await edit_or_answer(callback, f"💱 <b>RECIBIR {asset}</b>\n\nMonto a recargar: <b>{money(data['source_amount']):,.2f} {asset}</b>\n\n{details}\n\n⚠️ {config['instruction']}\n\n📥 Mínimo: 1 {asset} · Máximo: 10,000 {asset}\n⏱️ Tiempo estimado: En minutos\n\n📸 Envía ahora el comprobante del pago.", None)
+    await edit_or_answer(callback, f"💱 <b>RECARGAR USD · {asset}</b>\n\nMonto: <b>{m(data['amount'])} USD</b>\nRecibirás {asset} en la red seleccionada.\n\n{details}\n\n⚠️ {config['instruction']}\n\n📥 Primera recarga: mínimo 10 USD.\n⏱️ Tiempo estimado: En minutos\n\n📸 Envía ahora el comprobante del pago.", None)
 
 
 @router.callback_query(F.data == "topup:currency:pen")
-async def topup_currency_pen(callback: CallbackQuery, state: FSMContext):
+async def topup_currency_pen(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     data = await state.get_data()
     if data.get("country") != "pe":
         await callback.answer("Primero selecciona Perú.", show_alert=True)
         return
-    await state.update_data(currency="PEN", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum=str(PERU_PAYMENT_CONFIG["minimum"]), maximum=str(PERU_PAYMENT_CONFIG["maximum"]))
+    await state.update_data(currency="USD", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum="0.00", maximum=str(PERU_PAYMENT_CONFIG["maximum"] / PERU_PAYMENT_CONFIG["rate"]))
     await state.set_state(TopupFlow.amount)
-    await edit_or_answer(callback, "🇵🇪 <b>SOLES (PEN)</b>\n\nPrimero selecciona el monto que deseas recargar. Después verás la cuenta adecuada para el método elegido.", topup_amounts("PEN", PERU_PAYMENT_CONFIG["rate"]))
+    user = await event_user(callback, session, current_user)
+    first_topup = bool(user and not await has_approved_topup(session, user.id))
+    await edit_or_answer(callback, "🇵🇪 <b>RECARGAR USD</b>\n\nElige el monto en USD. La primera recarga debe ser mínimo de 10 USD; después podrás usar cualquier monto. La conversión a PEN se mostrará en el paso de pago.", topup_amounts("USD", Decimal(1), first_topup))
 
 
 @router.callback_query(F.data.startswith("topup:peru_method:"))
@@ -1764,22 +1768,24 @@ async def topup_peru_method(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Método no disponible.", show_alert=True)
         return
     data = await state.get_data()
-    if not data.get("source_amount"):
-        await callback.answer("Primero selecciona el monto.", show_alert=True)
+    if not data.get("amount"):
+        await callback.answer("Primero selecciona el monto en USD.", show_alert=True)
         return
+    usd_amount = money(data["amount"])
+    pen_amount = money(usd_amount * PERU_PAYMENT_CONFIG["rate"])
     await state.set_state(TopupFlow.proof)
-    await state.update_data(method=method_labels[method], currency="PEN", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum=str(PERU_PAYMENT_CONFIG["minimum"]), maximum=str(PERU_PAYMENT_CONFIG["maximum"]))
+    await state.update_data(source_amount=str(pen_amount), amount=str(usd_amount), currency="PEN", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum=str(PERU_PAYMENT_CONFIG["minimum"]), maximum=str(PERU_PAYMENT_CONFIG["maximum"]))
     if method in {"yape", "plin", "ligo"}:
         details = f"📱 Número de celular: <code>{PERU_PAYMENT_CONFIG['phone']}</code>\n🏦 Banco destino: <b>LIGO</b>"
     else:
         details = f"👤 Titular: <b>{PERU_PAYMENT_CONFIG['holder']}</b>\n🏦 CCI: <code>{PERU_PAYMENT_CONFIG['cci']}</code>"
     instructions = "Pega el número de celular de Yape, Plin, etc. y selecciona LIGO como banco destino." if method != "bank" else "Usa el número de CCI en bancos y/o cajas."
     data = await state.get_data()
-    await edit_or_answer(callback, f"💳 <b>{method_labels[method]}</b>\n\nMonto a recargar: <b>{money(data['source_amount']):,.2f} PEN → {m(data['amount'])}</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📥 Mínimo: {PERU_PAYMENT_CONFIG['minimum']:.2f} PEN · Máximo: {PERU_PAYMENT_CONFIG['maximum']:,.2f} PEN\n\n📸 Envía ahora el comprobante del pago.", None)
+    await edit_or_answer(callback, f"💳 <b>RECARGAR USD · {method_labels[method]}</b>\n\nMonto: <b>{m(data['amount'])} USD</b>\nPago local aproximado: <b>{money(data['source_amount']):,.2f} PEN</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📸 Envía ahora el comprobante del pago.", None)
 
 
 @router.callback_query(F.data.startswith("topup:method:"))
-async def topup_method(callback: CallbackQuery, state: FSMContext):
+async def topup_method(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     method = callback.data.rsplit(":", 1)[1]
     if method not in TOPUP_METHOD_LABELS:
         await callback.answer("Método no disponible.", show_alert=True)
@@ -1796,11 +1802,13 @@ async def topup_method(callback: CallbackQuery, state: FSMContext):
         details = f"Yape: <code>{settings.YAPE_NUMBER or 'no configurado'}</code>\nPlin: <code>{settings.PLIN_NUMBER or 'no configurado'}</code>"
     else:
         details = "Esta recarga se procesa de forma asistida. Contacta al administrador y conserva tu comprobante."
-    await edit_or_answer(callback, f"💳 <b>RECARGA · {TOPUP_METHOD_LABELS[method]}</b>\n📍 País: <b>{data['country_name']}</b>\n\n{details}\n\nSelecciona el monto en USD:", topup_amounts())
+    user = await event_user(callback, session, current_user)
+    first_topup = bool(user and not await has_approved_topup(session, user.id))
+    await edit_or_answer(callback, f"💳 <b>RECARGAR USD · {TOPUP_METHOD_LABELS[method]}</b>\n📍 País: <b>{data['country_name']}</b>\n\n{details}\n\nSelecciona el monto en USD. Primera recarga: mínimo 10 USD.", topup_amounts("USD", Decimal(1), first_topup))
 
 
 @router.callback_query(F.data.startswith("topup:amount:"))
-async def topup_amount_choice(callback: CallbackQuery, state: FSMContext):
+async def topup_amount_choice(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     parts = callback.data.split(":")
     if len(parts) != 5:
         await callback.answer("Monto inválido.", show_alert=True)
@@ -1811,12 +1819,17 @@ async def topup_amount_choice(callback: CallbackQuery, state: FSMContext):
     if source_amount <= 0 or usd_amount <= 0:
         await callback.answer("Monto inválido.", show_alert=True)
         return
+    user = await event_user(callback, session, current_user)
+    if user and not await has_approved_topup(session, user.id) and usd_amount < FIRST_TOPUP_MINIMUM_USD:
+        await callback.answer("La primera recarga debe ser de mínimo 10 USD.", show_alert=True)
+        return
     await state.update_data(amount=str(usd_amount), source_amount=str(source_amount), currency=currency)
     conversion = f"{source_amount} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
-    if currency == "PEN":
-        await edit_or_answer(callback, f"💵 <b>Monto seleccionado: {conversion}</b>\n\nAhora selecciona la cuenta o billetera peruana de destino:", peru_payment_methods())
-    elif currency in {"USDT", "USDC"}:
-        await edit_or_answer(callback, f"💵 <b>Monto seleccionado: {conversion}</b>\n\nAhora selecciona la red de destino:", crypto_networks(currency))
+    flow_data = await state.get_data()
+    if flow_data.get("country") == "pe":
+        await edit_or_answer(callback, f"💵 <b>RECARGAR USD: {m(usd_amount)}</b>\n\nAhora selecciona la cuenta o billetera peruana de destino. El pago local se calculará en PEN.", peru_payment_methods())
+    elif flow_data.get("asset") in {"USDT", "USDC"}:
+        await edit_or_answer(callback, f"💵 <b>RECARGAR USD: {m(usd_amount)}</b>\n\nAhora selecciona la red de destino para recibir {flow_data['asset']}.", crypto_networks(flow_data["asset"]))
     else:
         await state.set_state(TopupFlow.proof)
         await edit_or_answer(callback, f"💵 <b>Monto seleccionado: {conversion}</b>\n\nAhora envía la fotografía o documento del comprobante. Usa /start para cancelar.")
@@ -1831,8 +1844,11 @@ async def topup_custom(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(TopupFlow.amount, F.text)
-async def topup_amount(message: Message, state: FSMContext):
+async def topup_amount(message: Message, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     data = await state.get_data()
+    user = await event_user(message, session, current_user)
+    if not user:
+        return
     source_amount = money(message.text)
     currency = data.get("currency", "USD")
     rate = money(data.get("rate", "1")) or Decimal("1.00")
@@ -1848,10 +1864,13 @@ async def topup_amount(message: Message, state: FSMContext):
         await message.answer(f"❌ El máximo es {maximum:,.2f} {currency}.")
         return
     usd_amount = source_amount if currency == "USD" else money(source_amount / rate)
+    if not await has_approved_topup(session, user.id) and usd_amount < FIRST_TOPUP_MINIMUM_USD:
+        await message.answer("❌ Tu primera recarga debe ser de mínimo 10 USD. Después de una recarga aprobada podrás usar cualquier monto.")
+        return
     await state.update_data(amount=str(usd_amount), source_amount=str(source_amount), currency=currency)
     conversion = f"{source_amount:,.2f} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
-    if currency == "PEN":
-        await message.answer(f"✅ Monto registrado: <b>{conversion}</b>\n\nAhora selecciona la cuenta o billetera peruana de destino:", reply_markup=peru_payment_methods())
+    if data.get("country") == "pe":
+        await message.answer(f"✅ <b>RECARGAR USD: {m(usd_amount)}</b>\n\nAhora selecciona la cuenta o billetera peruana de destino. El pago local se calculará en PEN.", reply_markup=peru_payment_methods())
     elif currency in {"USDT", "USDC"}:
         await message.answer(f"✅ Monto registrado: <b>{conversion}</b>\n\nAhora selecciona la red de destino:", reply_markup=crypto_networks(currency))
     else:
