@@ -79,7 +79,11 @@ class Settings(BaseSettings):
     OPENAI_FALLBACK_MODEL: str = "gpt-5-nano"
     AI_COOLDOWN_SECONDS: float = 2.0
     YAPE_NUMBER: str = ""
+    YAPE_NAME: str = ""
+    LIGO_NUMBER: str = ""
+    LIGO_NAME: str = ""
     PLIN_NUMBER: str = ""
+    PLIN_NAME: str = ""
     BINANCE_USDT_ENABLED: bool = False
     BINANCE_USDT_ADDRESS: str = ""
     BINANCE_USDT_NETWORK: str = "TRC20"
@@ -472,7 +476,7 @@ def crypto_networks(asset: str) -> InlineKeyboardMarkup:
 def peru_payment_methods() -> InlineKeyboardMarkup:
     return kb([
         [("📱 Yape", "topup:peru_method:yape", None), ("📱 Plin", "topup:peru_method:plin", None)],
-        [("💳 Ligo", "topup:peru_method:ligo", None)],
+        [("💳 Takenos (Ligo)", "topup:peru_method:ligo", None)],
         [("🏦 Transferencia bancaria · CCI", "topup:peru_method:bank", None)],
         [("📍 Elegir otra moneda", "topup:country:pe", None)],
         [("❌ Cancelar", "menu:home", None)],
@@ -1791,13 +1795,21 @@ async def topup_peru_method(callback: CallbackQuery, state: FSMContext):
     pen_amount = money(usd_amount * PERU_PAYMENT_CONFIG["rate"])
     await state.set_state(TopupFlow.proof)
     await state.update_data(source_amount=str(pen_amount), amount=str(usd_amount), currency="PEN", rate=str(PERU_PAYMENT_CONFIG["rate"]), minimum=str(PERU_PAYMENT_CONFIG["minimum"]), maximum=str(PERU_PAYMENT_CONFIG["maximum"]))
-    if method in {"yape", "plin", "ligo"}:
-        details = f"📱 Número de celular: <code>{PERU_PAYMENT_CONFIG['phone']}</code>\n🏦 Banco destino: <b>LIGO</b>"
+    account_details = {
+        "yape": ("Yape", settings.YAPE_NUMBER, settings.YAPE_NAME),
+        "ligo": ("Takenos (Ligo)", settings.LIGO_NUMBER, settings.LIGO_NAME),
+        "plin": ("Plin", settings.PLIN_NUMBER, settings.PLIN_NAME),
+    }
+    if method in account_details:
+        account_label, account_number, account_name = account_details[method]
+        details = (f"📱 {account_label}: <code>{account_number or 'no configurado'}</code>\n"
+                   f"👤 Nombre: <b>{account_name or 'no configurado'}</b>")
+        instructions = "Realiza el pago al número indicado y envía el comprobante junto con tu ID."
     else:
         details = f"👤 Titular: <b>{PERU_PAYMENT_CONFIG['holder']}</b>\n🏦 CCI: <code>{PERU_PAYMENT_CONFIG['cci']}</code>"
-    instructions = "Pega el número de celular de Yape, Plin, etc. y selecciona LIGO como banco destino." if method != "bank" else "Usa el número de CCI en bancos y/o cajas."
+        instructions = "Usa el número de CCI en bancos y/o cajas y envía el comprobante junto con tu ID."
     data = await state.get_data()
-    await edit_or_answer(callback, f"💳 <b>RECARGAR USD · {method_labels[method]}</b>\n\nMonto: <b>{m(data['amount'])} USD</b>\nPago local aproximado: <b>{money(data['source_amount']):,.2f} PEN</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📸 Envía ahora el comprobante del pago.", None)
+    await edit_or_answer(callback, f"💳 <b>RECARGAR USD · {method_labels[method]}</b>\n\nMonto: <b>{m(data['amount'])} USD</b>\nPago local aproximado: <b>{money(data['source_amount']):,.2f} PEN</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📸 Envía ahora el comprobante del pago.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", None)
 
 
 @router.callback_query(F.data.startswith("topup:method:"))
