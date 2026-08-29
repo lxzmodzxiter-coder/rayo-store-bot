@@ -60,9 +60,9 @@ async def main():
         await session.refresh(user)
         assert not user.is_banned and user.ban_reason is None
 
-        protected = FakeMessage(owner_tg, "/rol 123 admin")
+        protected = FakeMessage(owner_tg, f"/rol {settings.OWNER_ID} admin")
         await cmd_rol(protected, session, current_user=owner)
-        assert "protegido" in protected.answers[0][0]
+        assert "protegido" in protected.answers[0][0].lower()
 
     print("ROLES_OK")
 

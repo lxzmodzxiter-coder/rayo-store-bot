@@ -41,13 +41,14 @@ async def main():
             await conn.run_sync(Base.metadata.create_all)
 
         async with async_session_maker() as session:
-            owner_tg = TelegramUser(id=123, is_bot=False, first_name="Owner")
+            owner_tg = TelegramUser(id=int(os.environ["OWNER_ID"]), is_bot=False, first_name="Owner")
             owner = await get_or_create_user(owner_tg, session)
             owner.balance = Decimal("0.00")
             await session.commit()
 
             socio_callback = FakeCallback(owner_tg)
             await partner_confirm(socio_callback, session, current_user=owner)
+            await session.refresh(owner)
             assert owner.is_partner is True
             assert owner.role == UserRole.DUENO
             assert owner.balance == Decimal("0.00")
@@ -56,6 +57,7 @@ async def main():
 
             premium_callback = FakeCallback(owner_tg)
             await premium_confirm(premium_callback, session, current_user=owner)
+            await session.refresh(owner)
             assert owner.is_premium is True
             assert owner.role == UserRole.DUENO
             assert owner.balance == Decimal("0.00")
