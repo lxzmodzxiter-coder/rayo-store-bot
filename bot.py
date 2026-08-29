@@ -589,9 +589,25 @@ def image_for_product(name: str) -> str | None:
 
 TOPUP_REGIONS = {
     "🌎 PAÍSES DISPONIBLES": [
-        ("pe", "🇵🇪 Perú"),
-        ("co", "🇨🇴 Colombia"),
         ("ar", "🇦🇷 Argentina"),
+        ("bo", "🇧🇴 Bolivia"),
+        ("br", "🇧🇷 Brasil"),
+        ("cl", "🇨🇱 Chile"),
+        ("co", "🇨🇴 Colombia"),
+        ("cr", "🇨🇷 Costa Rica"),
+        ("ec", "🇪🇨 Ecuador"),
+        ("sv", "🇸🇻 El Salvador"),
+        ("es", "🇪🇸 España"),
+        ("us", "🇺🇸 Estados Unidos"),
+        ("gt", "🇬🇹 Guatemala"),
+        ("hn", "🇭🇳 Honduras"),
+        ("mx", "🇲🇽 México"),
+        ("ni", "🇳🇮 Nicaragua"),
+        ("pa", "🇵🇦 Panamá"),
+        ("py", "🇵🇾 Paraguay"),
+        ("pe", "🇵🇪 Perú"),
+        ("do", "🇩🇴 República Dominicana"),
+        ("uy", "🇺🇾 Uruguay"),
         ("ve", "🇻🇪 Venezuela"),
     ],
 }

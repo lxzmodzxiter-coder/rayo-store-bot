@@ -14,7 +14,7 @@ assert "💵 5.00 USD" not in first_topup_texts
 assert "💵 10.00 USD" in first_topup_texts
 assert "💵 5.00 USD" in subsequent_topup_texts
 assert "💵 100.00 USD" in subsequent_topup_texts
-assert [code for code, _ in TOPUP_COUNTRIES] == ["pe", "co", "ar", "ve"]
+assert [code for code, _ in TOPUP_COUNTRIES] == ["ar", "bo", "br", "cl", "co", "cr", "ec", "sv", "es", "us", "gt", "hn", "mx", "ni", "pa", "py", "pe", "do", "uy", "ve"]
 
 print("TOPUP_OK")
 

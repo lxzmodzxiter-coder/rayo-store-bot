@@ -115,7 +115,7 @@ async def main():
         assert admin_panel == {"admin:payments", "admin:stats", "menu:home"}
         assert "owner:admins" not in owner_panel and "owner:admins" in dueno_panel
         assert len(owner_panel) < len(dueno_panel)
-        assert [code for code, _ in TOPUP_COUNTRIES] == ["pe", "co", "ar", "ve"]
+        assert [code for code, _ in TOPUP_COUNTRIES] == ["ar", "bo", "br", "cl", "co", "cr", "ec", "sv", "es", "us", "gt", "hn", "mx", "ni", "pa", "py", "pe", "do", "uy", "ve"]
 
         bot = FakeBot()
 
