@@ -402,7 +402,7 @@ def product_detail(product_id: int, back: str, can_buy: bool = True, variants: l
     if can_buy:
         if variants:
             for v_name, v_price in variants:
-                rows.append([(f"⏳ {v_name} | {v_price}", f"buy:{product_id}:{v_name}", None)])
+                rows.append([(f"⏳ {v_name} | {v_price} USD", f"buy:{product_id}:{v_name}", None)])
         else:
             rows.append([("🛒 Comprar", f"buy:{product_id}:default", None)])
     rows.append([("⬅️ Productos", back, None), ("🏠 Inicio", "menu:home", None)])
@@ -667,7 +667,7 @@ INITIAL_PRODUCTS = {
     "Android": [
         "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
         "HG CHEATS", "PRIME HOCK APK", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP", "PATO REGEDIT", "BALA MOD ANDROID",
-        "PROXY HG CHEATS",
+        "PROXY HG CHEATS", "PANEL HOLO VIP", "PROXY DRIP",
     ],
     "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE", "MONITE CHEATS IPHONE", "MONITE IOS PRO", "MONITE IOS BASIC", "GBOX CERTIFICADO", "MIGUIL MONITE LITE", "MIGUIL MONITE PRO"],
     "PC": ["BYPASS UID", "BR MODS PC", "AIMKILL PC"],
@@ -677,7 +677,7 @@ INITIAL_PRODUCTS = {
 # Prices supplied by the owner. The first variant is also the base display price.
 PRICE_CATALOG = {
     "PRÓXY ANDROID": [("1 Día", "2.00"), ("3 Días", "3.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
-    "DRIP CLIENT": [("1 Día", "3.00"), ("3 Días", "5.00"), ("7 Días", "7.00"), ("15 Días", "10.00"), ("31 Días", "15.00")],
+    "DRIP CLIENT": [("7 Días", "6.00"), ("30 Días", "12.00"), ("Permanente", "50.00")],
     "BR MODS MÓVIL - ROOT": [("1 Día", "2.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
     "PATO TEAM": [("3 Días", "3.00"), ("7 Días", "8.00"), ("15 Días", "6.00"), ("30 Días", "15.00")],
     "CUBAN MODS": [("1 Día", "2.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
@@ -690,9 +690,11 @@ PRICE_CATALOG = {
     "PATO REGEDIT": [("1 Hora", "1.00"), ("3 Horas", "2.00"), ("6 Horas", "3.00"), ("12 Horas", "5.00"), ("1 Día", "8.00"), ("2 Días", "12.00"), ("3 Días", "15.00"), ("7 Días", "20.00")],
     "BALA MOD ANDROID": [("1 Hora", "1.00"), ("3 Horas", "2.00"), ("6 Horas", "3.00"), ("12 Horas", "5.00"), ("1 Día", "8.00"), ("2 Días", "12.00"), ("3 Días", "15.00"), ("7 Días", "20.00")],
     "PROXY HG CHEATS": [("1 Día", "3.00"), ("10 Días", "6.00"), ("21 Días", "12.00")],
+    "PANEL HOLO VIP": [("30 Días", "15.00"), ("Permanente", "40.00")],
+    "PROXY DRIP": [("1 Día", "3.00"), ("7 Días", "7.00"), ("30 Días", "15.00")],
     "MIGUIL MONITE LITE": [("1 Día", "3.00"), ("7 Días", "8.00"), ("30 Días", "15.00")],
     "MIGUIL MONITE PRO": [("1 Día", "5.00"), ("7 Días", "15.00"), ("31 Días", "31.00")],
-    "MONITE CHEATS IPHONE": [("1 Día", "5.00"), ("7 Días", "15.00"), ("30 Días", "25.00")],
+    "MONITE CHEATS IPHONE": [("1 Mes", "25.00"), ("3 Meses", "50.00"), ("Permanente", "150.00")],
     "PROXY MENÚ": [("1 Día", "0.70"), ("10 Días", "8.00")],
     "PROYECTO HOLOGRAMA VIP": [("30 Días", "9.90"), ("Permanente", "29.90")],
     "E-Sign": [("360 Días", "10.00")],
@@ -710,7 +712,7 @@ PRICE_CATEGORIES = {
 }
 
 def price_variants_text(variants: list[tuple[str, str]]) -> str:
-    return ", ".join(f"{name} | {price}" for name, price in variants)
+    return ", ".join(f"{name} | {price} USD" for name, price in variants)
 
 
 class ProductSearch(StatesGroup):
@@ -1078,6 +1080,19 @@ async def activate_initial_inventory_once(session: AsyncSession) -> None:
     session.add(StoreSetting(key=marker_key, value="all_products_stock_5"))
 
 
+async def activate_new_catalog_products_once(session: AsyncSession) -> None:
+    marker_key = "catalog_prices_drip_holo_proxy_monite_v1"
+    if await session.get(StoreSetting, marker_key):
+        return
+    new_product_names = {"PANEL HOLO VIP", "PROXY DRIP"}
+    products = (await session.execute(select(Product).where(Product.name.in_(new_product_names)))).scalars().all()
+    for product in products:
+        if product.sales_count == 0:
+            product.stock = 5
+            product.is_active = True
+    session.add(StoreSetting(key=marker_key, value="new_catalog_products_stock_5"))
+
+
 async def seed_initial_products(session: AsyncSession) -> None:
     for legacy, current in LEGACY_CATEGORY_MAP.items():
         await session.execute(update(Product).where(Product.category == legacy).values(category=current))
@@ -1099,6 +1114,7 @@ async def seed_initial_products(session: AsyncSession) -> None:
                     existing.image_file_id = image_path
     await session.flush()
     await activate_initial_inventory_once(session)
+    await activate_new_catalog_products_once(session)
     await session.commit()
 
 
