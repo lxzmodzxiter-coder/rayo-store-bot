@@ -365,6 +365,7 @@ def kb(rows):
 def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
     rows = [
         [("🛍️ Catálogo de Productos", "menu:catalog", None)],
+        [("🔨 SUBASTAS", "menu:auctions", None)],
         [("💳 Recargar Saldo", "menu:balance", None), ("👤 Mi Perfil", "menu:profile", None)],
         [("💎 PREMIUN (10% OFF)", "menu:premium", None), ("🤝 SOCIO (20% OFF)", "menu:partner", None)],
         [("🎟️ Canjear Cupón", "menu:coupons", None), ("📞 Soporte", None, "https://t.me/Lxz_Modz")],
@@ -1454,6 +1455,20 @@ async def menu_home(callback: CallbackQuery, session: AsyncSession, current_user
     if user:
         await show_home(callback, user)
 
+
+@router.callback_query(F.data == "menu:auctions")
+async def menu_auctions(callback: CallbackQuery):
+    text = ("❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐀𝐔𝐂𝐓𝐈𝐎𝐍 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n"
+            "🔨 <b>SUBASTAS</b>\n\n"
+            "Aquí aparecerán las subastas activas de la tienda.\n"
+            "Cada publicación incluirá el producto, la puja actual, el incremento mínimo y el tiempo restante.\n\n"
+            "📭 Actualmente no hay subastas activas.\n\n"
+            "❓ Para consultar una próxima subasta, contacta a soporte.")
+    markup = kb([
+        [("📞 Contactar soporte", None, "https://t.me/Lxz_Modz")],
+        [("🏠 Inicio", "menu:home", None)],
+    ])
+    await edit_or_answer(callback, text, markup)
 
 @router.callback_query(F.data == "menu:catalog")
 async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
