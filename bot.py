@@ -1072,6 +1072,10 @@ async def edit_or_answer(callback: CallbackQuery, text: str, markup=None) -> Non
     await callback.answer()
 
 
+async def ensure_auction_tables(session: AsyncSession) -> None:
+    await session.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[Auction.__table__, AuctionBid.__table__]))
+
+
 async def log_event(session: AsyncSession, actor: int, action: str, target: str | None, result: str) -> None:
     session.add(AuditLog(actor_telegram_id=actor, action=action, target=target, result=result))
 
@@ -1490,6 +1494,7 @@ async def menu_home(callback: CallbackQuery, session: AsyncSession, current_user
 
 @router.callback_query(F.data == "owner:auctions")
 async def owner_auctions(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    await ensure_auction_tables(session)
     actor = await check_admin(callback, session, current_user)
     if not actor or not is_dueno(actor):
         await callback.answer("Solo el DUEÑO puede administrar subastas.", show_alert=True)
@@ -1598,6 +1603,7 @@ async def auction_increment(message: Message, bot: Bot, state: FSMContext, sessi
 
 @router.callback_query(F.data == "menu:auctions")
 async def menu_auctions(callback: CallbackQuery, session: AsyncSession):
+    await ensure_auction_tables(session)
     auctions = (await session.execute(select(Auction).where(Auction.status == "active").order_by(Auction.ends_at))).scalars().all()
     rows = []
     lines = ["❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐀𝐔𝐂𝐓𝐈𝐎𝐍 𝐂𝐄𝐍𝐓𝐄𝐑 ❱", "", "🔨 <b>SUBASTAS ACTIVAS</b>", ""]
@@ -1615,6 +1621,7 @@ async def menu_auctions(callback: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data.startswith("auction:view:"))
 async def auction_view(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
+    await ensure_auction_tables(session)
     try:
         auction_id = int(callback.data.rsplit(":", 1)[1])
     except ValueError:
@@ -1627,6 +1634,7 @@ async def auction_view(callback: CallbackQuery, session: AsyncSession, current_u
 
 @router.callback_query(F.data.startswith("auction:bid:"))
 async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
+    await ensure_auction_tables(session)
     bidder = await event_user(callback, session, current_user)
     if not bidder or bidder.is_banned:
         await callback.answer("No tienes acceso a las subastas.", show_alert=True); return
