@@ -1073,7 +1073,9 @@ async def edit_or_answer(callback: CallbackQuery, text: str, markup=None) -> Non
 
 
 async def ensure_auction_tables(session: AsyncSession) -> None:
-    await session.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[Auction.__table__, AuctionBid.__table__]))
+    del session
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=[Auction.__table__, AuctionBid.__table__]))
 
 
 async def log_event(session: AsyncSession, actor: int, action: str, target: str | None, result: str) -> None:
