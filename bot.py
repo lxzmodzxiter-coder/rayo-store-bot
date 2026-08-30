@@ -13,6 +13,7 @@ from html import escape
 from pathlib import Path
 from time import monotonic
 from typing import Any
+from urllib.parse import quote
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -84,6 +85,16 @@ class Settings(BaseSettings):
     LIGO_NAME: str = ""
     PLIN_NUMBER: str = ""
     PLIN_NAME: str = ""
+    ARGENTINA_METHOD_NAME: str = "Mercado Pago"
+    ARGENTINA_ACCOUNT: str = ""
+    ARGENTINA_HOLDER: str = ""
+    COLOMBIA_METHOD_NAME: str = "Nequi"
+    COLOMBIA_ACCOUNT: str = ""
+    COLOMBIA_HOLDER: str = ""
+    VENEZUELA_BANK_NAME: str = ""
+    VENEZUELA_PAYMENT_TYPE: str = ""
+    VENEZUELA_ID: str = ""
+    VENEZUELA_PHONE: str = ""
     BINANCE_USDT_ENABLED: bool = False
     BINANCE_USDT_ADDRESS: str = ""
     BINANCE_USDT_NETWORK: str = "TRC20"
@@ -473,6 +484,25 @@ def crypto_networks(asset: str) -> InlineKeyboardMarkup:
     return kb(rows)
 
 
+def local_payment_methods(country: str) -> InlineKeyboardMarkup:
+    labels = {
+        "ar": "🇦🇷 Mercado Pago",
+        "co": "🇨🇴 Nequi",
+        "ve": "🇻🇪 Bancamiga · Pago móvil",
+    }
+    return kb([
+        [(labels[country], "topup:venezuela_method:bancamiga" if country == "ve" else f"topup:local_method:{country}", None)],
+        [("📍 Elegir otro país", "menu:balance", None)],
+        [("❌ Cancelar", "menu:home", None)],
+    ])
+
+def venezuela_payment_methods() -> InlineKeyboardMarkup:
+    return kb([
+        [("🏦 Bancamiga · Pago móvil", "topup:venezuela_method:bancamiga", None)],
+        [("📍 Elegir otro país", "menu:balance", None)],
+        [("❌ Cancelar", "menu:home", None)],
+    ])
+
 def peru_payment_methods() -> InlineKeyboardMarkup:
     return kb([
         [("📱 Yape", "topup:peru_method:yape", None), ("📱 Plin", "topup:peru_method:plin", None)],
@@ -616,7 +646,7 @@ TOPUP_REGIONS = {
     ],
 }
 TOPUP_COUNTRIES = [country for countries in TOPUP_REGIONS.values() for country in countries]
-TOPUP_AMOUNTS = (5, 10, 15, 20, 30, 50, 100)
+TOPUP_AMOUNTS = (3, 5, 10, 15, 20, 30, 50, 100)
 TOPUP_METHOD_LABELS = {
     "paypal": "PayPal",
     "binance": "Binance",
@@ -681,7 +711,7 @@ PRICE_CATALOG = {
     "BR MODS MÓVIL - ROOT": [("1 Día", "2.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
     "PATO TEAM": [("3 Días", "3.00"), ("7 Días", "8.00"), ("15 Días", "6.00"), ("30 Días", "15.00")],
     "CUBAN MODS": [("1 Día", "2.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
-    "HG CHEATS": [("1 Día", "3.00"), ("10 Días", "10.00"), ("30 Días", "25.00")],
+    "HG CHEATS": [("1 Día", "3.00"), ("10 Días", "8.00"), ("30 Días", "14.00")],
     "PROXY POTATSO": [("1 Día", "2.00"), ("7 Días", "4.00"), ("30 Días", "18.00"), ("Keis Ilimitadas", "25.00")],
     "CERTIFICADO IPHONE": [("360 Días", "10.00")],
     "FLOURITE": [("1 Día", "5.00"), ("7 Días", "15.00"), ("30 Días", "31.00"), ("Permanente", "100.00")],
@@ -951,6 +981,7 @@ async def has_approved_topup(session: AsyncSession, user_id: int) -> bool:
 
 
 FIRST_TOPUP_MINIMUM_USD = Decimal("10.00")
+SUBSEQUENT_TOPUP_MINIMUM_USD = Decimal("3.00")
 
 
 async def get_or_create_user(telegram_user, session: AsyncSession, current: User | None = None, start_arg: str | None = None) -> User:
@@ -1696,7 +1727,7 @@ async def purchase_detail_view(callback: CallbackQuery, session: AsyncSession, c
 async def menu_balance(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     user = await event_user(callback, session, current_user)
     if user:
-        text = f"💳 <b>RECARGAR SALDO USD</b>\n\nSaldo actual: <b>{balance_display(user)}</b>\n\n📌 Primera recarga: mínimo <b>10 USD</b>. Después de una recarga aprobada: cualquier monto.\n\n📍 <b>SELECCIONA TU MÉTODO O PAÍS PARA RECARGAR:</b>"
+        text = f"💳 <b>RECARGAR SALDO USD</b>\n\nSaldo actual: <b>{balance_display(user)}</b>\n\n📌 Primera recarga: mínimo <b>10 USD</b>. Después de una recarga aprobada: mínimo <b>3 USD</b>.\n\n📍 <b>SELECCIONA TU MÉTODO O PAÍS PARA RECARGAR:</b>"
         markup = topup_countries()
         try:
             await callback.message.delete()
@@ -1722,7 +1753,7 @@ async def topup_assisted(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("topup:country:"))
-async def topup_country(callback: CallbackQuery, state: FSMContext):
+async def topup_country(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     code = callback.data.rsplit(":", 1)[1]
     country = dict(TOPUP_COUNTRIES).get(code)
     if not country:
@@ -1731,6 +1762,11 @@ async def topup_country(callback: CallbackQuery, state: FSMContext):
     await state.update_data(country=code, country_name=country, currency="USD", rate="1.00")
     if code == "pe":
         await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona la moneda que recibirás:", peru_currency_methods())
+    elif code in {"ar", "co", "ve"}:
+        await state.set_state(TopupFlow.amount)
+        user = await event_user(callback, session, current_user)
+        first_topup = bool(user and not await has_approved_topup(session, user.id))
+        await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el monto de la recarga en USD. La primera recarga debe ser mínimo de 10 USD.", topup_amounts("USD", Decimal(1), first_topup))
     else:
         await edit_or_answer(callback, f"📍 <b>{country}</b>\n\nSelecciona el activo digital que recibirás:", crypto_assets())
 
@@ -1793,8 +1829,110 @@ async def topup_currency_pen(callback: CallbackQuery, state: FSMContext, session
     await state.set_state(TopupFlow.amount)
     user = await event_user(callback, session, current_user)
     first_topup = bool(user and not await has_approved_topup(session, user.id))
-    await edit_or_answer(callback, "🇵🇪 <b>RECARGAR USD</b>\n\nElige el monto en USD. La primera recarga debe ser mínimo de 10 USD; después podrás usar cualquier monto. La conversión a PEN se mostrará en el paso de pago.", topup_amounts("USD", Decimal(1), first_topup))
+    await edit_or_answer(callback, "🇵🇪 <b>RECARGAR USD</b>\n\nElige el monto en USD. La primera recarga debe ser mínimo de 10 USD; después podrás usar desde 3 USD. La conversión a PEN se mostrará en el paso de pago.", topup_amounts("USD", Decimal(1), first_topup))
 
+
+@router.callback_query(F.data.startswith("topup:local_method:"))
+async def topup_local_method(callback: CallbackQuery, state: FSMContext):
+    country = callback.data.rsplit(":", 1)[1]
+    configs = {
+        "ar": (settings.ARGENTINA_METHOD_NAME, settings.ARGENTINA_ACCOUNT, settings.ARGENTINA_HOLDER, "Cuenta"),
+        "co": (settings.COLOMBIA_METHOD_NAME, settings.COLOMBIA_ACCOUNT, settings.COLOMBIA_HOLDER, "Cuenta"),
+    }
+    if country not in configs:
+        await callback.answer("Método no disponible.", show_alert=True)
+        return
+    data = await state.get_data()
+    if not data.get("amount"):
+        await callback.answer("Primero selecciona el monto en USD.", show_alert=True)
+        return
+    method, account, holder, account_label = configs[country]
+    usd_amount = money(data["amount"])
+    await state.set_state(TopupFlow.proof)
+    await state.update_data(method=f"{method} · {country.upper()}", source_amount=str(usd_amount), amount=str(usd_amount), currency="USD", rate="1.00")
+    details = (f"💳 <b>{method}</b>\n"
+               f"📌 {account_label}: <code>{account or 'no configurado'}</code>\n"
+               f"👤 Titular: <b>{holder or 'no configurado'}</b>")
+    share_text = f"Pago {method} · {account_label}: {account or 'no configurado'} · Titular: {holder or 'no configurado'} · Monto {m(usd_amount)} USD"
+    share_url = f"https://t.me/share/url?url=&text={quote(share_text)}"
+    markup = kb([
+        [("🔗 Compartir", None, share_url)],
+        [("📋 Copiar datos", "topup:local_copy", None)],
+        [("✅ He pagado", "topup:local_paid", None)],
+    ])
+    await edit_or_answer(callback, f"💳 <b>SELECCIONAR MÉTODO DE PAGO</b>\n\n💵 Monto: <b>{m(usd_amount)} USD</b>\n\n{details}\n\n📝 Una vez realizado el pago, espere la verificación. Después pulsa <b>He pagado</b> y envía el comprobante.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", markup)
+
+@router.callback_query(F.data == "topup:local_copy")
+async def topup_local_copy(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    country = data.get("country")
+    configs = {
+        "ar": (settings.ARGENTINA_METHOD_NAME, settings.ARGENTINA_ACCOUNT, settings.ARGENTINA_HOLDER),
+        "co": (settings.COLOMBIA_METHOD_NAME, settings.COLOMBIA_ACCOUNT, settings.COLOMBIA_HOLDER),
+    }
+    if country not in configs:
+        await callback.answer("Datos no disponibles.", show_alert=True)
+        return
+    method, account, holder = configs[country]
+    await callback.answer(f"{method}\nCuenta: {account or 'no configurado'}\nTitular: {holder or 'no configurado'}", show_alert=True)
+
+@router.callback_query(F.data == "topup:local_paid")
+async def topup_local_paid(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("amount"):
+        await callback.answer("Primero selecciona el monto.", show_alert=True)
+        return
+    await state.set_state(TopupFlow.proof)
+    await edit_or_answer(callback, "✅ <b>PAGO REGISTRADO</b>\n\n📸 Envía ahora la fotografía o documento del comprobante para que un administrador verifique la recarga.\n\n❓ Dudas: <a href=\"https://t.me/Lxz_Modz\">Contactar soporte</a>", None)
+
+@router.callback_query(F.data == "topup:venezuela_method:bancamiga")
+async def topup_venezuela_method(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("amount"):
+        await callback.answer("Primero selecciona el monto en USD.", show_alert=True)
+        return
+    usd_amount = money(data["amount"])
+    await state.set_state(TopupFlow.proof)
+    await state.update_data(method="Bancamiga · Pago Móvil", source_amount=str(usd_amount), amount=str(usd_amount), currency="USD", rate="1.00")
+    bank_name = settings.VENEZUELA_BANK_NAME or "no configurado"
+    payment_type = settings.VENEZUELA_PAYMENT_TYPE or "Pago móvil"
+    identity = settings.VENEZUELA_ID or "no configurado"
+    phone = settings.VENEZUELA_PHONE or "no configurado"
+    share_text = (f"Pago Venezuela · {bank_name} · {payment_type} · Cédula {identity} · TLF {phone} · "
+                  f"Monto {m(usd_amount)} USD")
+    share_url = f"https://t.me/share/url?url=&text={quote(share_text)}"
+    details = (f"🏦 <b>{bank_name}</b>\n"
+               f"📌 Tipo: <b>{payment_type}</b>\n"
+               f"🪪 Cédula: <code>{identity}</code>\n"
+               f"📞 TLF: <code>{phone}</code>")
+    external_prices = ("🚀 <b>PRECIOS DE DRIP CLIENT EXTERNAL</b>\n"
+                       "• 1 Día — <b>3 USD</b>\n"
+                       "• 3 Días — <b>5 USD</b>\n"
+                       "• 7 Días — <b>7 USD</b>\n"
+                       "• 30 Días — <b>14 USD</b>")
+    markup = kb([
+        [("🔗 Compartir", None, share_url)],
+        [("📋 Copiar datos", "topup:venezuela_copy", None)],
+        [("✅ He pagado", "topup:venezuela_paid", None)],
+    ])
+    await edit_or_answer(callback, f"💳 <b>SELECCIONAR MÉTODO DE PAGO</b>\n\n💵 Monto: <b>{m(usd_amount)} USD</b>\n\n{details}\n\n{external_prices}\n\n📝 Realiza el pago, comparte o copia los datos y luego pulsa <b>He pagado</b>.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", markup)
+
+@router.callback_query(F.data == "topup:venezuela_copy")
+async def topup_venezuela_copy(callback: CallbackQuery, state: FSMContext):
+    await callback.answer(
+        f"{settings.VENEZUELA_BANK_NAME or 'Bancamiga'} · {settings.VENEZUELA_PAYMENT_TYPE or 'Pago móvil'}\n"
+        f"Cédula: {settings.VENEZUELA_ID or 'no configurado'}\nTLF: {settings.VENEZUELA_PHONE or 'no configurado'}",
+        show_alert=True,
+    )
+
+@router.callback_query(F.data == "topup:venezuela_paid")
+async def topup_venezuela_paid(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data.get("amount"):
+        await callback.answer("Primero selecciona el monto.", show_alert=True)
+        return
+    await state.set_state(TopupFlow.proof)
+    await edit_or_answer(callback, "✅ <b>PAGO REGISTRADO</b>\n\n📸 Envía ahora la fotografía o documento del comprobante para que un administrador verifique la recarga.\n\n❓ Dudas: <a href=\"https://t.me/Lxz_Modz\">Contactar soporte</a>", None)
 
 @router.callback_query(F.data.startswith("topup:peru_method:"))
 async def topup_peru_method(callback: CallbackQuery, state: FSMContext):
@@ -1867,11 +2005,16 @@ async def topup_amount_choice(callback: CallbackQuery, state: FSMContext, sessio
     if user and not await has_approved_topup(session, user.id) and usd_amount < FIRST_TOPUP_MINIMUM_USD:
         await callback.answer("La primera recarga debe ser de mínimo 10 USD.", show_alert=True)
         return
+    if user and await has_approved_topup(session, user.id) and usd_amount < SUBSEQUENT_TOPUP_MINIMUM_USD:
+        await callback.answer("Después de la primera recarga, el mínimo es de 3 USD.", show_alert=True)
+        return
     await state.update_data(amount=str(usd_amount), source_amount=str(source_amount), currency=currency)
     conversion = f"{source_amount} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
     flow_data = await state.get_data()
     if flow_data.get("country") == "pe":
         await edit_or_answer(callback, f"💵 <b>RECARGAR USD: {m(usd_amount)}</b>\n\nAhora selecciona la cuenta o billetera peruana de destino. El pago local se calculará en PEN.", peru_payment_methods())
+    elif flow_data.get("country") in {"ar", "co", "ve"}:
+        await edit_or_answer(callback, f"💵 <b>RECARGAR USD: {m(usd_amount)}</b>\n\nSelecciona el método de pago local.", local_payment_methods(flow_data["country"]))
     elif flow_data.get("asset") in {"USDT", "USDC"}:
         await edit_or_answer(callback, f"💵 <b>RECARGAR USD: {m(usd_amount)}</b>\n\nAhora selecciona la red de destino para recibir {flow_data['asset']}.", crypto_networks(flow_data["asset"]))
     else:
@@ -1909,12 +2052,17 @@ async def topup_amount(message: Message, state: FSMContext, session: AsyncSessio
         return
     usd_amount = source_amount if currency == "USD" else money(source_amount / rate)
     if not await has_approved_topup(session, user.id) and usd_amount < FIRST_TOPUP_MINIMUM_USD:
-        await message.answer("❌ Tu primera recarga debe ser de mínimo 10 USD. Después de una recarga aprobada podrás usar cualquier monto.")
+        await message.answer("❌ Tu primera recarga debe ser de mínimo 10 USD. Después de una recarga aprobada podrás usar desde 3 USD.")
+        return
+    if await has_approved_topup(session, user.id) and usd_amount < SUBSEQUENT_TOPUP_MINIMUM_USD:
+        await message.answer("❌ Después de la primera recarga, el mínimo es de 3 USD.")
         return
     await state.update_data(amount=str(usd_amount), source_amount=str(source_amount), currency=currency)
     conversion = f"{source_amount:,.2f} {currency} → {m(usd_amount)}" if currency != "USD" else m(usd_amount)
     if data.get("country") == "pe":
         await message.answer(f"✅ <b>RECARGAR USD: {m(usd_amount)}</b>\n\nAhora selecciona la cuenta o billetera peruana de destino. El pago local se calculará en PEN.", reply_markup=peru_payment_methods())
+    elif data.get("country") in {"ar", "co", "ve"}:
+        await message.answer(f"✅ <b>RECARGAR USD: {m(usd_amount)}</b>\n\nSelecciona el método de pago local.", reply_markup=local_payment_methods(data["country"]))
     elif currency in {"USDT", "USDC"}:
         await message.answer(f"✅ Monto registrado: <b>{conversion}</b>\n\nAhora selecciona la red de destino:", reply_markup=crypto_networks(currency))
     else:
