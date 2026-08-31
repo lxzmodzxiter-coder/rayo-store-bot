@@ -461,7 +461,7 @@ def product_detail(product_id: int, back: str, can_buy: bool = True, variants: l
     if can_buy:
         if variants:
             for v_name, v_price in variants:
-                rows.append([(f"⏳ {v_name} | {v_price} USD", f"buy:{product_id}:{v_name}", None)])
+                rows.append([(f"⏳ {v_name} | {v_price}", f"buy:{product_id}:{v_name}", None)])
         else:
             rows.append([("🛒 Comprar", f"buy:{product_id}:default", None)])
     rows.append([("⬅️ Productos", back, None), ("🏠 Inicio", "menu:home", None)])
@@ -1030,7 +1030,7 @@ def can_manage_products(user: User | None) -> bool:
 
 
 def balance_display(user: User) -> str:
-    return "∞ USD (saldo infinito)" if has_infinite_balance(user) else f"{m(user.balance)} USD"
+    return "∞ USD (saldo infinito)" if has_infinite_balance(user) else f"{m(user.balance)}"
 
 
 def socio_discount_percent(user: User) -> Decimal:
@@ -1293,7 +1293,7 @@ async def cmd_miscompras(message: Message, session: AsyncSession, current_user: 
         await message.answer("🛒 Todavía no tienes compras registradas. Abre el catálogo para comenzar."); return
     lines = ["🛒 <b>MIS COMPRAS RECIENTES</b>", ""]
     for purchase in purchases:
-        lines.append(f"• <code>{purchase.order_id}</code> · {escape(purchase.product_name)} · {m(purchase.price)} USD · {purchase.status.value} · {now_text(purchase.created_at)}")
+        lines.append(f"• <code>{purchase.order_id}</code> · {escape(purchase.product_name)} · {m(purchase.price)} · {purchase.status.value} · {now_text(purchase.created_at)}")
     await message.answer("\n".join(lines))
 
 
@@ -1501,10 +1501,10 @@ async def cmd_saldo(message: Message, bot: Bot, session: AsyncSession, current_u
     session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT, amount=amount, balance_after=target.balance, reference=str(actor.telegram_id), note="/saldo USD"))
     await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"+{amount}")
     await session.commit()
-    await message.answer(f"✅ <b>SALDO ENTREGADO</b>\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: +{m(amount)} USD\n💰 Nuevo saldo: {m(target.balance)} USD")
+    await message.answer(f"✅ <b>SALDO ENTREGADO</b>\n\n👤 {name_of(target)}\n🆔 {target.telegram_id}\n➕ Movimiento: +{m(amount)}\n💰 Nuevo saldo: {m(target.balance)}")
     if target.telegram_id != actor.telegram_id:
         try:
-            await bot.send_message(target.telegram_id, f"💰 <b>SALDO USD RECIBIDO</b>\n\nSe agregaron: <b>+{m(amount)} USD</b>\nSaldo actual: <b>{m(target.balance)} USD</b>")
+            await bot.send_message(target.telegram_id, f"💰 <b>SALDO USD RECIBIDO</b>\n\nSe agregaron: <b>+{m(amount)}</b>\nSaldo actual: <b>{m(target.balance)}</b>")
         except Exception:
             # El saldo ya fue confirmado en la base de datos; un bloqueo o fallo de Telegram no lo revierte.
             logger.exception("No se pudo notificar al usuario %s sobre su saldo USD.", target.telegram_id)
@@ -1576,7 +1576,7 @@ async def owner_auctions(callback: CallbackQuery, state: FSMContext, session: As
         if auction.ends_at <= utcnow():
             auction.status = "closed"
             continue
-        lines.append(f"• #{auction.id} · {escape(auction.product_name)} · {m(auction.current_price)} USD · termina {now_text(auction.ends_at)}")
+        lines.append(f"• #{auction.id} · {escape(auction.product_name)} · {m(auction.current_price)} · termina {now_text(auction.ends_at)}")
     if len(lines) == 2:
         lines.append("No hay subastas activas.")
     await session.commit()
@@ -1655,8 +1655,8 @@ async def auction_increment(message: Message, bot: Bot, state: FSMContext, sessi
     await state.clear()
     notification = ("🔨 <b>NUEVA SUBASTA DISPONIBLE</b>\n\n"
                     f"📦 Producto: <b>{escape(auction.product_name)}</b>\n"
-                    f"💰 Precio inicial: <b>{m(auction.initial_price)} USD</b>\n"
-                    f"📈 Incremento por puja: <b>{m(auction.increment)} USD</b>\n"
+                    f"💰 Precio inicial: <b>{m(auction.initial_price)}</b>\n"
+                    f"📈 Incremento por puja: <b>{m(auction.increment)}</b>\n"
                     f"⏱️ Duración: <b>{auction.duration_minutes} minutos</b>\n\n"
                     "Entra a Subastas para participar.")
     users = (await session.execute(select(User.telegram_id).where(User.is_banned.is_(False)))).scalars().all()
@@ -1681,7 +1681,7 @@ async def menu_auctions(callback: CallbackQuery, session: AsyncSession):
         if auction.ends_at <= utcnow():
             auction.status = "closed"
             continue
-        lines.append(f"📦 <b>{escape(auction.product_name)}</b> · Puja actual: <b>{m(auction.current_price)} USD</b> · termina: {now_text(auction.ends_at)}")
+        lines.append(f"📦 <b>{escape(auction.product_name)}</b> · Puja actual: <b>{m(auction.current_price)}</b> · termina: {now_text(auction.ends_at)}")
         rows.append([("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)])
     if not rows:
         lines.append("📭 Actualmente no hay subastas activas.")
@@ -1699,7 +1699,7 @@ async def auction_view(callback: CallbackQuery, session: AsyncSession, current_u
     if not auction or auction.status != "active" or auction.ends_at <= utcnow():
         if auction: auction.status = "closed"; await session.commit()
         await callback.answer("Esta subasta ya terminó.", show_alert=True); return
-    await edit_or_answer(callback, f"🔨 <b>SUBASTA #{auction.id}</b>\n\n📦 Producto: <b>{escape(auction.product_name)}</b>\n💰 Precio inicial: <b>{m(auction.initial_price)} USD</b>\n🔥 Puja actual: <b>{m(auction.current_price)} USD</b>\n📈 Tu próxima puja: <b>{m(auction.current_price + auction.increment)} USD</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[ ("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
+    await edit_or_answer(callback, f"🔨 <b>SUBASTA #{auction.id}</b>\n\n📦 Producto: <b>{escape(auction.product_name)}</b>\n💰 Precio inicial: <b>{m(auction.initial_price)}</b>\n🔥 Puja actual: <b>{m(auction.current_price)}</b>\n📈 Tu próxima puja: <b>{m(auction.current_price + auction.increment)}</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[ ("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
 
 @router.callback_query(F.data.startswith("auction:more:"))
 async def auction_more(callback: CallbackQuery, session: AsyncSession):
@@ -1712,8 +1712,8 @@ async def auction_more(callback: CallbackQuery, session: AsyncSession):
     if not auction or auction.status != "active" or auction.ends_at <= utcnow():
         await callback.answer("Esta subasta ya terminó.", show_alert=True)
         return
-    markup = kb([[ (f"+{amount} USD", f"auction:bid:{auction.id}:{amount}", None) for amount in range(1, 6) ], [("⬅️ Volver", "menu:auctions", None)]])
-    await edit_or_answer(callback, f"💰 <b>PUJAR MÁS</b>\n\n📦 {escape(auction.product_name)}\n🔥 Puja actual: <b>{m(auction.current_price)} USD</b>\nSelecciona cuánto deseas aumentar:", markup)
+    markup = kb([[ (f"+{amount}", f"auction:bid:{auction.id}:{amount}", None) for amount in range(1, 6) ], [("⬅️ Volver", "menu:auctions", None)]])
+    await edit_or_answer(callback, f"💰 <b>PUJAR MÁS</b>\n\n📦 {escape(auction.product_name)}\n🔥 Puja actual: <b>{m(auction.current_price)}</b>\nSelecciona cuánto deseas aumentar:", markup)
 
 @router.callback_query(F.data.startswith("auction:bid:"))
 async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
@@ -1734,7 +1734,7 @@ async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_us
         await callback.answer("Esta subasta ya terminó.", show_alert=True); return
     amount = money(auction.current_price) + increase
     if not has_infinite_balance(bidder) and money(bidder.balance) < amount:
-        await callback.answer(f"Necesitas {m(amount)} USD de saldo para pujar.", show_alert=True); return
+        await callback.answer(f"Necesitas {m(amount)} de saldo para pujar.", show_alert=True); return
     if not has_infinite_balance(bidder):
         bidder.balance = money(bidder.balance) - amount
         session.add(BalanceTransaction(user_id=bidder.id, kind=BalanceTransactionType.DEBIT, amount=amount, balance_after=bidder.balance, reference=f"auction:{auction.id}", note="Puja de subasta"))
@@ -1743,7 +1743,7 @@ async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_us
     session.add(AuctionBid(auction_id=auction.id, bidder_id=bidder.telegram_id, amount=amount))
     await log_event(session, bidder.telegram_id, "auction_bid", str(auction.id), str(amount))
     await session.commit()
-    await edit_or_answer(callback, f"✅ <b>PUJA REGISTRADA</b>\n\n📦 {escape(auction.product_name)}\n🔥 Nueva puja actual: <b>{m(amount)} USD</b>\n📈 Próxima puja mínima: <b>{m(amount + Decimal('1.00'))} USD</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[ ("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
+    await edit_or_answer(callback, f"✅ <b>PUJA REGISTRADA</b>\n\n📦 {escape(auction.product_name)}\n🔥 Nueva puja actual: <b>{m(amount)}</b>\n📈 Próxima puja mínima: <b>{m(amount + Decimal('1.00'))}</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[ ("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
 
 @router.callback_query(F.data == "menu:catalog")
 async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
@@ -1945,7 +1945,7 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         if state:
             await state.clear()
         delivery = f"\n\n📦 <b>DATOS DE ENTREGA:</b>\n<code>{product.delivery_data}</code>" if product.delivery_data else "\n\n📦 Entrega: el administrador procesará tu pedido."
-        text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)} USD\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
+        text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
         await callback.message.edit_text(text, reply_markup=nav())
         await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product_name_full}\n💵 {m(total)}\n🧾 {order_id}")
     except Exception:
@@ -1965,7 +1965,7 @@ async def menu_profile(callback: CallbackQuery, session: AsyncSession, current_u
             f"💰 𝐒𝐚𝐥𝐝𝐨: {balance_display(user)}\n\n"
             f"📊 <b>𝐄𝐒𝐓𝐀𝐃𝐈́𝐒𝐓𝐈𝐂𝐀𝐒</b>\n"
             f"📦 Compras: {user.purchases_count}\n"
-            f"💵 Gastado: {m(user.total_spent)} USD\n"
+            f"💵 Gastado: {m(user.total_spent)}\n"
             f"📅 Registro: {now_text(user.created_at)}\n\n"
             f"🎁 <b>𝐁𝐄𝐍𝐄𝐅𝐈𝐂𝐈𝐎𝐒</b>\n"
             f"💎 PREMIUN: {'Activo · 10% OFF' if user.role == UserRole.PREMIUN or active_premium(user) else 'Inactivo'}\n"
@@ -1978,7 +1978,7 @@ async def render_purchases(callback: CallbackQuery, session: AsyncSession, user:
     pages = max(1, math.ceil(len(items) / PAGE_SIZE))
     page = max(0, min(page, pages - 1))
     current = items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
-    text = f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐇𝐈𝐒𝐓𝐎𝐑𝐘 ❱\n\n📦 <b>MIS COMPRAS</b> · Página {page + 1}/{pages}\n\n" + ("\n".join(f"🧾 <code>{p.order_id}</code>\n📦 {p.product_name} · {m(p.price)} USD\n" for p in current) if current else "Aún no tienes compras.")
+    text = f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐇𝐈𝐒𝐓𝐎𝐑𝐘 ❱\n\n📦 <b>MIS COMPRAS</b> · Página {page + 1}/{pages}\n\n" + ("\n".join(f"🧾 <code>{p.order_id}</code>\n📦 {p.product_name} · {m(p.price)}\n" for p in current) if current else "Aún no tienes compras.")
     rows = []
     for p in current:
         rows.append([(f"🔍 Ver {p.order_id}", f"purchase:{p.id}", None)])
@@ -2009,7 +2009,7 @@ async def purchase_detail_view(callback: CallbackQuery, session: AsyncSession, c
     if not purchase:
         await callback.answer("Compra no encontrada.", show_alert=True); return
     delivery = f"\n\n📦 Datos: <code>{purchase.delivery_data}</code>" if purchase.delivery_data else ""
-    text = f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐃𝐄𝐓𝐀𝐈𝐋 ❱\n\n🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)} USD\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
+    text = f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐏𝐔𝐑𝐂𝐇𝐀𝐒𝐄 𝐃𝐄𝐓𝐀𝐈𝐋 ❱\n\n🧾 <b>DETALLE DE COMPRA</b>\n\nPedido: <code>{purchase.order_id}</code>\nProducto: {purchase.product_name}\nPagado: {m(purchase.price)}\nEstado: {purchase.status.value}\nFecha: {now_text(purchase.created_at)}{delivery}"
     markup = kb([[("⬅️ Historial", "menu:purchases", None), ("🏠 Inicio", "menu:home", None)]])
     try:
         await callback.message.delete()
@@ -2116,7 +2116,7 @@ async def topup_network(callback: CallbackQuery, state: FSMContext):
                f"📥 Dirección: <code>{config['address']}</code>\n"
                f"💸 Comisión: {config['fee']}")
     data = await state.get_data()
-    await edit_or_answer(callback, f"💱 <b>RECARGAR USD · {asset}</b>\n\nMonto: <b>{m(data['amount'])} USD</b>\nRecibirás {asset} en la red seleccionada.\n\n{details}\n\n⚠️ {config['instruction']}\n\n📥 Primera recarga: mínimo 10 USD.\n⏱️ Tiempo estimado: En minutos\n\n📸 Envía ahora el comprobante del pago.", None)
+    await edit_or_answer(callback, f"💱 <b>RECARGAR USD · {asset}</b>\n\nMonto: <b>{m(data['amount'])}</b>\nRecibirás {asset} en la red seleccionada.\n\n{details}\n\n⚠️ {config['instruction']}\n\n📥 Primera recarga: mínimo 10 USD.\n⏱️ Tiempo estimado: En minutos\n\n📸 Envía ahora el comprobante del pago.", None)
 
 
 @router.callback_query(F.data == "topup:currency:pen")
@@ -2153,14 +2153,14 @@ async def topup_local_method(callback: CallbackQuery, state: FSMContext):
     details = (f"💳 <b>{method}</b>\n"
                f"📌 {account_label}: <code>{account or 'no configurado'}</code>\n"
                f"👤 Titular: <b>{holder or 'no configurado'}</b>")
-    share_text = f"Pago {method} · {account_label}: {account or 'no configurado'} · Titular: {holder or 'no configurado'} · Monto {m(usd_amount)} USD"
+    share_text = f"Pago {method} · {account_label}: {account or 'no configurado'} · Titular: {holder or 'no configurado'} · Monto {m(usd_amount)}"
     share_url = f"https://t.me/share/url?url=&text={quote(share_text)}"
     markup = kb([
         [("🔗 Compartir", None, share_url)],
         [("📋 Copiar datos", "topup:local_copy", None)],
         [("✅ He pagado", "topup:local_paid", None)],
     ])
-    await edit_or_answer(callback, f"💳 <b>SELECCIONAR MÉTODO DE PAGO</b>\n\n💵 Monto: <b>{m(usd_amount)} USD</b>\n\n{details}\n\n📝 Una vez realizado el pago, espere la verificación. Después pulsa <b>He pagado</b> y envía el comprobante.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", markup)
+    await edit_or_answer(callback, f"💳 <b>SELECCIONAR MÉTODO DE PAGO</b>\n\n💵 Monto: <b>{m(usd_amount)}</b>\n\n{details}\n\n📝 Una vez realizado el pago, espere la verificación. Después pulsa <b>He pagado</b> y envía el comprobante.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", markup)
 
 @router.callback_query(F.data == "topup:local_copy")
 async def topup_local_copy(callback: CallbackQuery, state: FSMContext):
@@ -2199,7 +2199,7 @@ async def topup_venezuela_method(callback: CallbackQuery, state: FSMContext):
     identity = settings.VENEZUELA_ID or "no configurado"
     phone = settings.VENEZUELA_PHONE or "no configurado"
     share_text = (f"Pago Venezuela · {bank_name} · {payment_type} · Cédula {identity} · TLF {phone} · "
-                  f"Monto {m(usd_amount)} USD")
+                  f"Monto {m(usd_amount)}")
     share_url = f"https://t.me/share/url?url=&text={quote(share_text)}"
     details = (f"🏦 <b>{bank_name}</b>\n"
                f"📌 Tipo: <b>{payment_type}</b>\n"
@@ -2215,7 +2215,7 @@ async def topup_venezuela_method(callback: CallbackQuery, state: FSMContext):
         [("📋 Copiar datos", "topup:venezuela_copy", None)],
         [("✅ He pagado", "topup:venezuela_paid", None)],
     ])
-    await edit_or_answer(callback, f"💳 <b>SELECCIONAR MÉTODO DE PAGO</b>\n\n💵 Monto: <b>{m(usd_amount)} USD</b>\n\n{details}\n\n{external_prices}\n\n📝 Realiza el pago, comparte o copia los datos y luego pulsa <b>He pagado</b>.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", markup)
+    await edit_or_answer(callback, f"💳 <b>SELECCIONAR MÉTODO DE PAGO</b>\n\n💵 Monto: <b>{m(usd_amount)}</b>\n\n{details}\n\n{external_prices}\n\n📝 Realiza el pago, comparte o copia los datos y luego pulsa <b>He pagado</b>.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", markup)
 
 @router.callback_query(F.data == "topup:venezuela_copy")
 async def topup_venezuela_copy(callback: CallbackQuery, state: FSMContext):
@@ -2263,7 +2263,7 @@ async def topup_peru_method(callback: CallbackQuery, state: FSMContext):
         details = f"👤 Titular: <b>{PERU_PAYMENT_CONFIG['holder']}</b>\n🏦 CCI: <code>{PERU_PAYMENT_CONFIG['cci']}</code>"
         instructions = "Usa el número de CCI en bancos y/o cajas y envía el comprobante junto con tu ID."
     data = await state.get_data()
-    await edit_or_answer(callback, f"💳 <b>RECARGAR USD · {method_labels[method]}</b>\n\nMonto: <b>{m(data['amount'])} USD</b>\nPago local aproximado: <b>{money(data['source_amount']):,.2f} PEN</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📸 Envía ahora el comprobante del pago.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", None)
+    await edit_or_answer(callback, f"💳 <b>RECARGAR USD · {method_labels[method]}</b>\n\nMonto: <b>{m(data['amount'])}</b>\nPago local aproximado: <b>{money(data['source_amount']):,.2f} PEN</b>\n\n{details}\n\n📝 {instructions}\n\n💱 1 USD = {PERU_PAYMENT_CONFIG['rate']:.2f} PEN\n📸 Envía ahora el comprobante del pago.\n\n❓ Dudas: <a href=\"{settings.SUPPORT_URL}\">Contactar soporte</a>", None)
 
 
 @router.callback_query(F.data.startswith("topup:method:"))
@@ -2772,10 +2772,10 @@ async def admin_balance_confirm(callback: CallbackQuery, state: FSMContext, bot:
     session.add(BalanceTransaction(user_id=target.id, kind=BalanceTransactionType.CREDIT if sign > 0 else BalanceTransactionType.DEBIT, amount=sign * amount, balance_after=target.balance, reference=str(actor.telegram_id)))
     await log_event(session, actor.telegram_id, "balance_change", str(target.telegram_id), f"{sign * amount}"); await session.commit(); await state.clear()
     try:
-        await bot.send_message(target.telegram_id, f"💰 <b>{'SALDO USD RECIBIDO' if sign > 0 else 'SALDO USD DESCONTADO'}</b>\n\nMovimiento: {'+' if sign > 0 else '-'}{m(amount)} USD\nNuevo saldo: {m(target.balance)} USD")
+        await bot.send_message(target.telegram_id, f"💰 <b>{'SALDO USD RECIBIDO' if sign > 0 else 'SALDO USD DESCONTADO'}</b>\n\nMovimiento: {'+' if sign > 0 else '-'}{m(amount)}\nNuevo saldo: {m(target.balance)}")
     except (TelegramForbiddenError, TelegramBadRequest):
         logger.warning("No se pudo notificar al usuario %s sobre el cambio de saldo.", target.telegram_id)
-    await edit_or_answer(callback, f"✅ <b>{'SALDO USD ENTREGADO' if sign > 0 else 'SALDO USD DESCONTADO'}</b>.\n\nNuevo saldo: {m(target.balance)} USD", nav(True, "admin:home"))
+    await edit_or_answer(callback, f"✅ <b>{'SALDO USD ENTREGADO' if sign > 0 else 'SALDO USD DESCONTADO'}</b>.\n\nNuevo saldo: {m(target.balance)}", nav(True, "admin:home"))
 
 
 @router.callback_query(F.data.startswith("admin:premium:"))
