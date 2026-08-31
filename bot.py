@@ -246,6 +246,17 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
 
 
+class ProductVariant(Base):
+    __tablename__ = "product_variants"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    stock: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False)
+
+
 class Auction(Base):
     __tablename__ = "auctions"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -774,6 +785,25 @@ PRICE_CATALOG = {
     "GBOX CERTIFICADO": [("360 Días", "10.00")],
     "PRIME HOCK APK": [("1 Día", "5.00")],
 }
+STANDARD_DURATIONS = ("1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente")
+
+def complete_price_variants(name: str, variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    source = {}
+    for label, raw in variants:
+        digits = "".join(ch for ch in label if ch.isdigit())
+        if "perman" in label.lower():
+            source["Permanente"] = raw
+        elif digits and "hora" not in label.lower():
+            days = int(digits) * (30 if "mes" in label.lower() else 1)
+            source[days] = raw
+    base = Decimal(str(source.get(1) or source.get(3) or source.get(7) or source.get(30) or source.get("Permanente") or (variants[0][1] if variants else "1.00")))
+    prices = {}
+    for days, label, multiplier in ((1, "1 Día", Decimal(1)), (3, "3 Días", Decimal("1.7")), (7, "7 Días", Decimal("2.4")), (15, "15 Días", Decimal("3.5")), (30, "30 Días", Decimal("5.0"))):
+        prices[label] = str(money(source.get(days, base * multiplier)))
+    prices["Permanente"] = str(money(source.get("Permanente", source.get(30, base * Decimal(12)))))
+    return [(label, prices[label]) for label in STANDARD_DURATIONS]
+
+
 PRICE_CATEGORIES = {
     "PATO REGEDIT": "Android", "BALA MOD ANDROID": "Android", "PROXY HG CHEATS": "Android",
     "MIGUIL MONITE LITE": "iOS", "MIGUIL MONITE PRO": "iOS", "MONITE CHEATS IPHONE": "iOS",
@@ -871,6 +901,10 @@ def selected_price(product: Product, variant: str) -> Decimal | None:
         if name == variant:
             return price
     return None
+
+
+async def product_variant_rows(session: AsyncSession, product_id: int) -> list[ProductVariant]:
+    return list((await session.execute(select(ProductVariant).where(ProductVariant.product_id == product_id).order_by(ProductVariant.id))).scalars().all())
 
 
 def purchase_duration(purchase: Purchase) -> str:
@@ -1163,9 +1197,9 @@ async def activate_initial_inventory_once(session: AsyncSession) -> None:
         return
     products = (await session.execute(select(Product))).scalars().all()
     for product in products:
-        # La nueva activación universal solo inicializa productos sin ventas.
-        # Así los productos vendidos no recuperan unidades en un reinicio.
-        if product.sales_count == 0:
+        has_variants = bool(await session.scalar(select(func.count(ProductVariant.id)).where(ProductVariant.product_id == product.id)))
+        # Los productos con variantes mantienen el stock agregado de sus planes.
+        if product.sales_count == 0 and not has_variants:
             product.stock = 5
             product.is_active = True
     session.add(StoreSetting(key=marker_key, value="all_products_stock_5"))
@@ -1178,7 +1212,8 @@ async def activate_new_catalog_products_once(session: AsyncSession) -> None:
     new_product_names = {"PANEL HOLO VIP", "PROXY DRIP"}
     products = (await session.execute(select(Product).where(Product.name.in_(new_product_names)))).scalars().all()
     for product in products:
-        if product.sales_count == 0:
+        has_variants = bool(await session.scalar(select(func.count(ProductVariant.id)).where(ProductVariant.product_id == product.id)))
+        if product.sales_count == 0 and not has_variants:
             product.stock = 5
             product.is_active = True
     session.add(StoreSetting(key=marker_key, value="new_catalog_products_stock_5"))
@@ -1191,7 +1226,8 @@ async def seed_initial_products(session: AsyncSession) -> None:
         for name in names:
             existing = (await session.execute(select(Product).where(Product.name == name))).scalar_one_or_none()
             image_path = image_for_product(name)
-            price_variants = PRICE_CATALOG.get(name)
+            raw_price_variants = PRICE_CATALOG.get(name)
+            price_variants = complete_price_variants(name, raw_price_variants) if raw_price_variants else None
             description = price_variants_text(price_variants) if price_variants else "Producto agregado; configura precio, stock y entrega desde /agregas."
             base_price = money(price_variants[0][1]) if price_variants else Decimal("0.00")
             if not existing:
@@ -1203,6 +1239,19 @@ async def seed_initial_products(session: AsyncSession) -> None:
                     existing.price = base_price
                 if image_path and not existing.image_file_id:
                     existing.image_file_id = image_path
+    await session.flush()
+    for product in (await session.execute(select(Product))).scalars().all():
+        variants = complete_price_variants(product.name, PRICE_CATALOG[product.name]) if product.name in PRICE_CATALOG else []
+        for variant_name, variant_price in variants:
+            row = (await session.execute(select(ProductVariant).where(ProductVariant.product_id == product.id, ProductVariant.name == variant_name))).scalar_one_or_none()
+            if not row:
+                session.add(ProductVariant(product_id=product.id, name=variant_name, price=money(variant_price), stock=5))
+            else:
+                row.price = money(variant_price)
+        if variants:
+            await session.flush()
+            product.stock = await session.scalar(select(func.coalesce(func.sum(ProductVariant.stock), 0)).where(ProductVariant.product_id == product.id)) or 0
+            product.is_active = product.stock > 0
     await session.flush()
     await activate_initial_inventory_once(session)
     await activate_new_catalog_products_once(session)
@@ -1756,12 +1805,15 @@ async def product_info(callback: CallbackQuery, session: AsyncSession):
         await callback.answer("Producto no encontrado.", show_alert=True)
         return
 
-    variant_options = parse_variants(product.description)
+    variant_rows = await product_variant_rows(session, product.id)
+    variant_options = [(row.name, money(row.price)) for row in variant_rows] or parse_variants(product.description)
     variants = [(name, m(price)) for name, price in variant_options]
-    can_buy = product.is_active and product.stock > 0 and (bool(variant_options) or product.price > 0)
+    stock_map = {row.name: row.stock for row in variant_rows}
+    can_buy = product.is_active and (any(stock_map.get(name, product.stock) > 0 for name, _ in variant_options) if variant_rows else product.stock > 0) and (bool(variant_options) or product.price > 0)
 
     if variants:
-        text = f"📦 <b>{product.name}</b> 📥\n\n⏱️ <b>SELECCIONA LA DURACIÓN DE TU LICENCIA:</b>"
+        stock_lines = "\n".join(f"• {name}: {m(price)} · Stock: {stock_map.get(name, product.stock)}" for name, price in variant_options)
+        text = f"📦 <b>{product.name}</b> 📥\n\n⏱️ <b>SELECCIONA LA DURACIÓN DE TU LICENCIA:</b>\n\n{stock_lines}"
     else:
         stock = "Agotado" if product.stock <= 0 else str(product.stock)
         display_status = "Disponible" if can_buy else ("Agotado" if product.is_active and product.price > 0 else "Pendiente de configuración")
@@ -1784,12 +1836,14 @@ async def product_info(callback: CallbackQuery, session: AsyncSession):
 async def buy_preview(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None, state: FSMContext | None = None):
     user = await event_user(callback, session, current_user)
     product = (await session.execute(select(Product).where(Product.id == int(callback.data.split(":")[1]), Product.is_active.is_(True)))).scalar_one_or_none()
-    if not user or not product or product.stock <= 0:
-        await callback.answer("Producto agotado o no disponible.", show_alert=True)
-        return
     parts = callback.data.split(":", 2)
     variant = parts[2] if len(parts) > 2 else "default"
-    price = selected_price(product, variant)
+    variant_row = None if variant == "default" else (await session.execute(select(ProductVariant).where(ProductVariant.product_id == int(parts[1]), ProductVariant.name == variant))).scalar_one_or_none()
+    available_stock = variant_row.stock if variant_row else (product.stock if product else 0)
+    if not user or not product or available_stock <= 0:
+        await callback.answer("Esta duración está agotada o no disponible.", show_alert=True)
+        return
+    price = money(variant_row.price) if variant_row else selected_price(product, variant)
     if price is None:
         await callback.answer("Duración o precio no disponible.", show_alert=True)
         return
@@ -1842,11 +1896,12 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
     try:
         user = (await session.execute(select(User).where(User.telegram_id == user.telegram_id).with_for_update())).scalar_one()
         product = (await session.execute(select(Product).where(Product.id == product_id, Product.is_active.is_(True)).with_for_update())).scalar_one_or_none()
-        if not product or product.stock <= 0:
-            await callback.message.edit_text("❌ El producto ya no está disponible.", reply_markup=nav())
+        variant_row = None if variant == "default" else (await session.execute(select(ProductVariant).where(ProductVariant.product_id == product_id, ProductVariant.name == variant).with_for_update())).scalar_one_or_none()
+        available_stock = variant_row.stock if variant_row else (product.stock if product else 0)
+        if not product or available_stock <= 0:
+            await callback.message.edit_text("❌ Esta duración ya no está disponible.", reply_markup=nav())
             return
-
-        price = selected_price(product, variant)
+        price = money(variant_row.price) if variant_row else selected_price(product, variant)
         if price is None:
             await callback.message.edit_text("❌ La duración seleccionada ya no está disponible.", reply_markup=nav())
             return
@@ -1870,7 +1925,11 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
             user.balance = money(user.balance) - total
         user.total_spent = money(user.total_spent) + total
         user.purchases_count += 1
-        product.stock -= 1
+        if variant_row:
+            variant_row.stock -= 1
+            product.stock = max(0, product.stock - 1)
+        else:
+            product.stock -= 1
         product.sales_count += 1
         variant_text = f" ({variant})" if variant != "default" else ""
         product_name_full = f"{product.name}{variant_text}"
@@ -2804,6 +2863,17 @@ async def product_delivery(message: Message, state: FSMContext, session: AsyncSe
     session.add(product); await log_event(session, actor.telegram_id, "product_create", data["name"], "created"); await session.commit(); await state.clear(); await message.answer("✅ Producto creado correctamente.", reply_markup=nav(True, "admin:products"))
 
 
+@router.callback_query(F.data.startswith("admin:product:variantstock:"))
+async def product_variant_stock_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
+    actor = await check_admin(callback, session, current_user)
+    if not can_manage_products(actor):
+        await callback.answer("Solo ADMIN, OWNER o DUEÑO.", show_alert=True)
+        return
+    await state.set_state(ProductEdit.value)
+    await state.update_data(edit="variant_stock", product_id=int(callback.data.split(":")[3]))
+    await edit_or_answer(callback, "📊 Escribe duración|stock. Ejemplo: 7 Días|5")
+
+
 @router.callback_query(F.data.startswith("admin:product:stock:"))
 async def product_stock_prompt(callback: CallbackQuery, state: FSMContext, session: AsyncSession, current_user: User | None = None):
     actor = await check_admin(callback, session, current_user)
@@ -2843,7 +2913,27 @@ async def product_edit_value(message: Message, state: FSMContext, session: Async
     data = await state.get_data(); product = (await session.execute(select(Product).where(Product.id == data.get("product_id")).with_for_update())).scalar_one_or_none()
     if not product: await state.clear(); await message.answer("❌ Producto inexistente."); return
     edit_type = data.get("edit")
-    if edit_type == "stock":
+    if edit_type == "variant_stock":
+        if not message.text or "|" not in message.text:
+            await message.answer("❌ Usa el formato: 7 Días|5")
+            return
+        variant_name, raw_stock = [part.strip() for part in message.text.split("|", 1)]
+        try:
+            value = int(raw_stock)
+        except ValueError:
+            await message.answer("❌ Stock inválido.")
+            return
+        if value < 0:
+            await message.answer("❌ El stock no puede ser negativo.")
+            return
+        variant_row = (await session.execute(select(ProductVariant).where(ProductVariant.product_id == product.id, ProductVariant.name.ilike(variant_name)))).scalar_one_or_none()
+        if not variant_row:
+            await message.answer("❌ Duración no encontrada. Usa exactamente una de las duraciones mostradas.")
+            return
+        variant_row.stock = value
+        product.stock = await session.scalar(select(func.coalesce(func.sum(ProductVariant.stock), 0)).where(ProductVariant.product_id == product.id)) or 0
+        product.is_active = product.stock > 0
+    elif edit_type == "stock":
         if not message.text: await message.answer("❌ Formato inválido."); return
         try: value = int(message.text.strip())
         except ValueError: await message.answer("❌ Stock inválido."); return
@@ -2882,7 +2972,8 @@ async def admin_product_detail(callback: CallbackQuery, session: AsyncSession, c
     if can_manage_products(actor):
         rows.extend([
             [("🟢 Activar" if not product.is_active else "🔴 Desactivar", f"admin:product:toggle:{product.id}", None), ("🗑️ Eliminar", f"admin:product:delete:{product.id}", None)],
-            [("📊 Modificar stock", f"admin:product:stock:{product.id}", None), ("💵 Cambiar precio", f"admin:product:price:{product.id}", None)],
+            [("📊 Stock general", f"admin:product:stock:{product.id}", None), ("📊 Stock por día", f"admin:product:variantstock:{product.id}", None)],
+            [("💵 Cambiar precio", f"admin:product:price:{product.id}", None)],
             [("🖼️ Cambiar imagen", f"admin:product:image:{product.id}", None), ("📦 Cambiar entrega", f"admin:product:delivery:{product.id}", None)],
         ])
     rows.append([ ("⬅️ Productos", "admin:products", None) ])

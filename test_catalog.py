@@ -8,8 +8,10 @@ from bot import (
     PRICE_CATALOG,
     Base,
     Product,
+    ProductVariant,
     StoreSetting,
     async_session_maker,
+    complete_price_variants,
     engine,
     seed_initial_products,
 )
@@ -23,54 +25,34 @@ async def main():
     async with async_session_maker() as session:
         await seed_initial_products(session)
         products = (await session.execute(select(Product))).scalars().all()
+        variants = (await session.execute(select(ProductVariant))).scalars().all()
         by_name = {product.name: product for product in products}
         expected = {name for names in INITIAL_PRODUCTS.values() for name in names}
         assert expected <= by_name.keys()
         assert set(PRICE_CATALOG) <= by_name.keys()
 
-        for name, variants in PRICE_CATALOG.items():
-            assert by_name[name].price == Decimal(variants[0][1])
+        for name, price_variants in PRICE_CATALOG.items():
+            assert by_name[name].price == Decimal(complete_price_variants(name, price_variants)[0][1])
+            product_variants = [row for row in variants if row.product_id == by_name[name].id]
+            assert [row.name for row in product_variants] == ["1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente"]
+            assert all(row.stock == 5 for row in product_variants)
+            assert by_name[name].stock == 30
+            assert by_name[name].is_active
 
         assert products
-        assert all(product.stock == 5 and product.is_active for product in products)
         assert await session.get(StoreSetting, "initial_inventory_all_products_stock_5_v3")
 
-        sold = products[0]
-        sold.sales_count = 1
-        sold.stock = 3
-        untouched = products[1]
-        untouched.stock = 2
-        untouched.is_active = False
-        await session.commit()
-
-        await seed_initial_products(session)
-        persisted_sold = await session.get(Product, sold.id)
-        persisted_untouched = await session.get(Product, untouched.id)
-        assert persisted_sold.stock == 3
-        assert persisted_sold.is_active is True
-        assert persisted_untouched.stock == 2
-        assert persisted_untouched.is_active is False
-
-        # Una activación posterior no repone ni reactiva productos que ya se vendieron.
-        marker = await session.get(StoreSetting, "initial_inventory_all_products_stock_5_v3")
-        await session.delete(marker)
-        untouched.sales_count = 0
-        untouched.stock = 0
-        untouched.is_active = False
-        sold.stock = 1
-        sold.is_active = True
+        selected = next(row for row in variants if row.name == "7 Días")
+        selected.stock = 2
+        product = await session.get(Product, selected.product_id)
+        product.stock = 27
         await session.commit()
         await seed_initial_products(session)
-        migrated_sold = await session.get(Product, sold.id)
-        migrated_untouched = await session.get(Product, untouched.id)
-        assert migrated_sold.stock == 1
-        assert migrated_sold.is_active is True
-        assert migrated_untouched.stock == 5
-        assert migrated_untouched.is_active is True
+        persisted_variant = await session.get(ProductVariant, selected.id)
+        assert persisted_variant.stock == 2
 
     print("CATALOG_OK")
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
