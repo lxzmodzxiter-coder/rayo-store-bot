@@ -1069,7 +1069,10 @@ async def edit_or_answer(callback: CallbackQuery, text: str, markup=None) -> Non
         except TelegramBadRequest:
             pass
         await callback.message.answer(text, reply_markup=markup)
-    await callback.answer()
+    try:
+        await callback.answer()
+    except TelegramBadRequest:
+        pass
 
 
 async def ensure_auction_tables(session: AsyncSession) -> None:
@@ -1612,7 +1615,7 @@ async def menu_auctions(callback: CallbackQuery, session: AsyncSession):
             auction.status = "closed"
             continue
         lines.append(f"📦 <b>{escape(auction.product_name)}</b> · Puja actual: <b>{m(auction.current_price)} USD</b> · termina: {now_text(auction.ends_at)}")
-        rows.append([(f"🔨 Pujar · +{m(auction.increment)}", f"auction:view:{auction.id}", None)])
+        rows.append([("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)])
     if not rows:
         lines.append("📭 Actualmente no hay subastas activas.")
     rows.append([("🏠 Inicio", "menu:home", None)])
@@ -1629,22 +1632,40 @@ async def auction_view(callback: CallbackQuery, session: AsyncSession, current_u
     if not auction or auction.status != "active" or auction.ends_at <= utcnow():
         if auction: auction.status = "closed"; await session.commit()
         await callback.answer("Esta subasta ya terminó.", show_alert=True); return
-    await edit_or_answer(callback, f"🔨 <b>SUBASTA #{auction.id}</b>\n\n📦 Producto: <b>{escape(auction.product_name)}</b>\n💰 Precio inicial: <b>{m(auction.initial_price)} USD</b>\n🔥 Puja actual: <b>{m(auction.current_price)} USD</b>\n📈 Tu próxima puja: <b>{m(auction.current_price + auction.increment)} USD</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[(f"✅ Pujar +{m(auction.increment)}", f"auction:bid:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
+    await edit_or_answer(callback, f"🔨 <b>SUBASTA #{auction.id}</b>\n\n📦 Producto: <b>{escape(auction.product_name)}</b>\n💰 Precio inicial: <b>{m(auction.initial_price)} USD</b>\n🔥 Puja actual: <b>{m(auction.current_price)} USD</b>\n📈 Tu próxima puja: <b>{m(auction.current_price + auction.increment)} USD</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[ ("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
+
+@router.callback_query(F.data.startswith("auction:more:"))
+async def auction_more(callback: CallbackQuery, session: AsyncSession):
+    try:
+        auction_id = int(callback.data.rsplit(":", 1)[1])
+    except ValueError:
+        await callback.answer("Subasta inválida.", show_alert=True)
+        return
+    auction = (await session.execute(select(Auction).where(Auction.id == auction_id))).scalar_one_or_none()
+    if not auction or auction.status != "active" or auction.ends_at <= utcnow():
+        await callback.answer("Esta subasta ya terminó.", show_alert=True)
+        return
+    markup = kb([[ (f"+{amount} USD", f"auction:bid:{auction.id}:{amount}", None) for amount in range(1, 6) ], [("⬅️ Volver", "menu:auctions", None)]])
+    await edit_or_answer(callback, f"💰 <b>PUJAR MÁS</b>\n\n📦 {escape(auction.product_name)}\n🔥 Puja actual: <b>{m(auction.current_price)} USD</b>\nSelecciona cuánto deseas aumentar:", markup)
 
 @router.callback_query(F.data.startswith("auction:bid:"))
 async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     bidder = await event_user(callback, session, current_user)
     if not bidder or bidder.is_banned:
         await callback.answer("No tienes acceso a las subastas.", show_alert=True); return
+    parts = callback.data.split(":")
     try:
-        auction_id = int(callback.data.rsplit(":", 1)[1])
-    except ValueError:
+        auction_id = int(parts[2])
+        increase = money(parts[3]) if len(parts) > 3 else Decimal("1.00")
+    except (ValueError, InvalidOperation):
         await callback.answer("Subasta inválida.", show_alert=True); return
+    if increase < Decimal("1.00") or increase > Decimal("5.00"):
+        await callback.answer("El aumento debe estar entre 1 y 5 USD.", show_alert=True); return
     auction = (await session.execute(select(Auction).where(Auction.id == auction_id).with_for_update())).scalar_one_or_none()
     if not auction or auction.status != "active" or auction.ends_at <= utcnow():
         if auction: auction.status = "closed"; await session.commit()
         await callback.answer("Esta subasta ya terminó.", show_alert=True); return
-    amount = money(auction.current_price) + money(auction.increment)
+    amount = money(auction.current_price) + increase
     if not is_dueno(bidder) and money(bidder.balance) < amount:
         await callback.answer(f"Necesitas {m(amount)} USD de saldo para pujar.", show_alert=True); return
     if not is_dueno(bidder):
@@ -1655,8 +1676,7 @@ async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_us
     session.add(AuctionBid(auction_id=auction.id, bidder_id=bidder.telegram_id, amount=amount))
     await log_event(session, bidder.telegram_id, "auction_bid", str(auction.id), str(amount))
     await session.commit()
-    await callback.answer(f"Puja registrada: {m(amount)} USD")
-    await edit_or_answer(callback, f"✅ <b>PUJA REGISTRADA</b>\n\n📦 {escape(auction.product_name)}\n🔥 Nueva puja actual: <b>{m(amount)} USD</b>\n📈 Próxima puja: <b>{m(amount + auction.increment)} USD</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[(f"✅ Pujar +{m(auction.increment)}", f"auction:bid:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
+    await edit_or_answer(callback, f"✅ <b>PUJA REGISTRADA</b>\n\n📦 {escape(auction.product_name)}\n🔥 Nueva puja actual: <b>{m(amount)} USD</b>\n📈 Próxima puja mínima: <b>{m(amount + Decimal('1.00'))} USD</b>\n⏱️ Termina: <b>{now_text(auction.ends_at)}</b>", kb([[ ("✅ Pujar +1 USD", f"auction:bid:{auction.id}:1", None), ("💰 Pujar más", f"auction:more:{auction.id}", None)], [("⬅️ Subastas", "menu:auctions", None), ("🏠 Inicio", "menu:home", None)]]))
 
 @router.callback_query(F.data == "menu:catalog")
 async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
