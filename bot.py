@@ -67,6 +67,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 class Settings(BaseSettings):
     BOT_TOKEN: str
     OWNER_ID: int
+    OWNER_INFINITE_IDS: str = ""
     DATABASE_URL: str = "sqlite+aiosqlite:///./lxz_store.db"
     STORE_NAME: str = "LXZ STORE BEST"
     CURRENCY: str = "USD"
@@ -109,6 +110,17 @@ class Settings(BaseSettings):
     PREMIUN_DISCOUNT_PERCENT: Decimal = Decimal("10.00")
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def owner_infinite_ids(self) -> set[int]:
+        result = set()
+        for value in self.OWNER_INFINITE_IDS.split(","):
+            try:
+                if value.strip():
+                    result.add(int(value.strip()))
+            except ValueError:
+                continue
+        return result
 
     @property
     def admin_ids(self) -> set[int]:
@@ -957,6 +969,10 @@ def is_dueno(user: User | None) -> bool:
     return bool(user and user.role == UserRole.DUENO)
 
 
+def has_infinite_balance(user: User | None) -> bool:
+    return bool(user and (is_dueno(user) or (user.role == UserRole.OWNER and user.telegram_id in settings.owner_infinite_ids)))
+
+
 def is_admin(user: User | None) -> bool:
     return bool(user and user.role in (UserRole.ADMIN, UserRole.OWNER, UserRole.DUENO))
 
@@ -980,7 +996,7 @@ def can_manage_products(user: User | None) -> bool:
 
 
 def balance_display(user: User) -> str:
-    return "∞ USD (saldo infinito)" if is_dueno(user) else f"{m(user.balance)} USD"
+    return "∞ USD (saldo infinito)" if has_infinite_balance(user) else f"{m(user.balance)} USD"
 
 
 def socio_discount_percent(user: User) -> Decimal:
@@ -1028,6 +1044,8 @@ async def get_or_create_user(telegram_user, session: AsyncSession, current: User
             user.rank_title = "Cliente"
         if telegram_user.id == settings.OWNER_ID:
             user.role = UserRole.DUENO
+        elif telegram_user.id in settings.owner_infinite_ids:
+            user.role = UserRole.OWNER
         await session.commit()
         return user
     referred_by = None
@@ -1041,7 +1059,7 @@ async def get_or_create_user(telegram_user, session: AsyncSession, current: User
                     ref.referrals_count += 1
         except ValueError:
             pass
-    role = UserRole.DUENO if telegram_user.id == settings.OWNER_ID else (UserRole.ADMIN if telegram_user.id in settings.admin_ids else UserRole.USUARIO)
+    role = UserRole.DUENO if telegram_user.id == settings.OWNER_ID else (UserRole.OWNER if telegram_user.id in settings.owner_infinite_ids else (UserRole.ADMIN if telegram_user.id in settings.admin_ids else UserRole.USUARIO))
     user = User(telegram_id=telegram_user.id, username=telegram_user.username, first_name=telegram_user.first_name or "Usuario", last_name=telegram_user.last_name, role=role, referred_by=referred_by, rank_title="Cliente Nuevo")
     session.add(user)
     await session.commit()
@@ -1100,7 +1118,7 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
     if is_owner_role(user):
         admin_commands += "\n<code>/broadcast</code> · <code>/saldo ID CANTIDAD USD</code>"
     role_display = f"\n🗝 𝐏𝐞𝐫𝐦𝐢𝐬𝐨𝐬: {user.role.value} — 𝐀𝐂𝐂𝐄𝐒𝐒"
-    benefit_display = "\n♾️ 𝐁𝐞𝐧𝐞𝐟𝐢𝐜𝐢𝐨: Saldo infinito" if is_dueno(user) else ""
+    benefit_display = "\n♾️ 𝐁𝐞𝐧𝐞𝐟𝐢𝐜𝐢𝐨: Saldo infinito" if has_infinite_balance(user) else ""
     text = (f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐂𝐎𝐌𝐌𝐀𝐍𝐃 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n"
             f"💮 ʟxᴢ • 𝐍𝐞𝐨-𝐒𝐲𝐬𝐭𝐞𝐦 • 𝐍𝐞𝐭𝐰𝐨𝐫𝐤 💮\n\n"
             f"👤 𝐔𝐬𝐮𝐚𝐫𝐢𝐨: {name_of(user)} | <code>{user.telegram_id}</code>{role_display}\n"
@@ -1666,9 +1684,9 @@ async def auction_bid(callback: CallbackQuery, session: AsyncSession, current_us
         if auction: auction.status = "closed"; await session.commit()
         await callback.answer("Esta subasta ya terminó.", show_alert=True); return
     amount = money(auction.current_price) + increase
-    if not is_dueno(bidder) and money(bidder.balance) < amount:
+    if not has_infinite_balance(bidder) and money(bidder.balance) < amount:
         await callback.answer(f"Necesitas {m(amount)} USD de saldo para pujar.", show_alert=True); return
-    if not is_dueno(bidder):
+    if not has_infinite_balance(bidder):
         bidder.balance = money(bidder.balance) - amount
         session.add(BalanceTransaction(user_id=bidder.id, kind=BalanceTransactionType.DEBIT, amount=amount, balance_after=bidder.balance, reference=f"auction:{auction.id}", note="Puja de subasta"))
     auction.current_price = amount
@@ -1793,8 +1811,8 @@ async def buy_preview(callback: CallbackQuery, session: AsyncSession, current_us
             total -= discount
             coupon_line = f"\n🎟️ Descuento ({coupon_code}): -{m(discount)}"
     product_label = f"{product.name} ({variant})" if variant != "default" else product.name
-    text = f"🛒 <b>CONFIRMAR COMPRA</b>\n\n📦 Producto: {product_label}\n💵 Precio: {m(price)}{partner_line}{coupon_line}\n💳 Total: <b>{m(total)}</b>\n📊 Stock: {product.stock}\n💰 Saldo disponible: {balance_display(user)}\n💰 Saldo después: {balance_display(user) if is_dueno(user) else m(money(user.balance) - total)}"
-    if not is_dueno(user) and money(user.balance) < total:
+    text = f"🛒 <b>CONFIRMAR COMPRA</b>\n\n📦 Producto: {product_label}\n💵 Precio: {m(price)}{partner_line}{coupon_line}\n💳 Total: <b>{m(total)}</b>\n📊 Stock: {product.stock}\n💰 Saldo disponible: {balance_display(user)}\n💰 Saldo después: {balance_display(user) if has_infinite_balance(user) else m(money(user.balance) - total)}"
+    if not has_infinite_balance(user) and money(user.balance) < total:
         await edit_or_answer(callback, text + "\n\n❌ Saldo insuficiente.", confirm("menu:balance", f"product:{product.id}"))
     else:
         await edit_or_answer(callback, text, confirm(f"buyconfirm:{product.id}:{variant}", f"product:{product.id}"))
@@ -1844,11 +1862,11 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
                 coupon = None
             discount = coupon_discount(coupon, money(price) - member_discount, user)
         total = money(price) - member_discount - discount
-        if not is_dueno(user) and user.balance < total:
+        if not has_infinite_balance(user) and user.balance < total:
             await callback.message.edit_text(f"❌ <b>SALDO INSUFICIENTE</b>\n\nSaldo actual: {m(user.balance)}\nPrecio: {m(total)}\nFalta: {m(total - money(user.balance))}", reply_markup=nav())
             return
         order_id = f"LXZ-{secrets.token_hex(5).upper()}"
-        if not is_dueno(user):
+        if not has_infinite_balance(user):
             user.balance = money(user.balance) - total
         user.total_spent = money(user.total_spent) + total
         user.purchases_count += 1
@@ -1859,7 +1877,7 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         purchase = Purchase(order_id=order_id, user_id=user.id, product_id=product.id, product_name=product_name_full, price=total, discount=member_discount + discount, coupon_code=coupon.code if coupon else None, delivery_data=product.delivery_data, delivered_at=utcnow() if product.delivery_data else None)
         session.add(purchase)
         await session.flush()
-        session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.PURCHASE, amount=Decimal("0.00") if is_dueno(user) else -total, balance_after=user.balance, reference=order_id, note=f"{product_name_full} · saldo infinito DUEÑO" if is_dueno(user) else product_name_full))
+        session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.PURCHASE, amount=Decimal("0.00") if has_infinite_balance(user) else -total, balance_after=user.balance, reference=order_id, note=f"{product_name_full} · saldo infinito DUEÑO" if has_infinite_balance(user) else product_name_full))
         if coupon:
             coupon.used_count += 1
             session.add(CouponRedemption(coupon_id=coupon.id, user_id=user.id, purchase_id=purchase.id))
@@ -2408,10 +2426,10 @@ async def partner_pay_balance(callback: CallbackQuery, session: AsyncSession, cu
         await edit_or_answer(callback, "✅ Ya tienes activo el estado de Socio Oficial.", nav())
         return
     fee = money(settings.PARTNER_FEE_USD)
-    if not is_dueno(user) and money(user.balance) < fee:
+    if not has_infinite_balance(user) and money(user.balance) < fee:
         await edit_or_answer(callback, f"❌ Saldo insuficiente.\n\nNecesitas: {m(fee)}\nSaldo actual: {m(user.balance)}\n\nPuedes recargar saldo o pagar por transferencia.", partner_menu())
         return
-    balance_after = balance_display(user) if is_dueno(user) else m(money(user.balance) - fee)
+    balance_after = balance_display(user) if has_infinite_balance(user) else m(money(user.balance) - fee)
     await edit_or_answer(callback, f"🤝 <b>CONFIRMAR SOCIO OFICIAL</b>\n\nInversión única: {m(fee)}\nDescuento permanente: {settings.PARTNER_DISCOUNT_PERCENT}%\nSaldo después: {balance_after}", confirm("partner:confirm", "menu:partner"))
 
 
@@ -2425,17 +2443,17 @@ async def partner_confirm(callback: CallbackQuery, session: AsyncSession, curren
         await callback.answer("El estado ya está activo o el usuario no existe.", show_alert=True)
         return
     fee = money(settings.PARTNER_FEE_USD)
-    if not is_dueno(user) and money(user.balance) < fee:
+    if not has_infinite_balance(user) and money(user.balance) < fee:
         await edit_or_answer(callback, "❌ El saldo ya no es suficiente para activar Socio Oficial.", partner_menu())
         return
-    if not is_dueno(user):
+    if not has_infinite_balance(user):
         user.balance = money(user.balance) - fee
         session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.DEBIT, amount=-fee, balance_after=user.balance, reference="partner", note="Socio Oficial"))
     user.is_partner = True
     user.partner_since = utcnow()
     if user.role == UserRole.USUARIO:
         user.role = UserRole.SOCIO
-    await log_event(session, user.telegram_id, "partner_activate", str(user.telegram_id), f"fee={Decimal('0.00') if is_dueno(user) else fee}")
+    await log_event(session, user.telegram_id, "partner_activate", str(user.telegram_id), f"fee={Decimal('0.00') if has_infinite_balance(user) else fee}")
     await session.commit()
     await edit_or_answer(callback, f"✅ <b>SOCIO OFICIAL ACTIVADO</b>\n\nDescuento aplicado: {settings.PARTNER_DISCOUNT_PERCENT}%\nSaldo restante: {balance_display(user)}", nav())
 
@@ -2466,10 +2484,10 @@ async def premium_pay_balance(callback: CallbackQuery, session: AsyncSession, cu
         await edit_or_answer(callback, "✅ Ya tienes PREMIUN activo y recibes 10% OFF automáticamente.", nav())
         return
     fee = money(settings.PREMIUN_FEE_USD)
-    if not is_dueno(user) and money(user.balance) < fee:
+    if not has_infinite_balance(user) and money(user.balance) < fee:
         await edit_or_answer(callback, f"❌ Saldo insuficiente.\n\nNecesitas: {m(fee)}\nSaldo actual: {m(user.balance)}", premium_menu())
         return
-    balance_after = balance_display(user) if is_dueno(user) else m(money(user.balance) - fee)
+    balance_after = balance_display(user) if has_infinite_balance(user) else m(money(user.balance) - fee)
     await edit_or_answer(callback, f"💎 <b>CONFIRMAR PREMIUN</b>\n\nPrecio: {m(fee)}\nSaldo después: {balance_after}\nBeneficio: 10% OFF automático en el catálogo.", confirm("premium:confirm", "menu:premium"))
 
 
@@ -2486,10 +2504,10 @@ async def premium_confirm(callback: CallbackQuery, session: AsyncSession, curren
         await edit_or_answer(callback, "✅ PREMIUN ya está activo.", nav())
         return
     fee = money(settings.PREMIUN_FEE_USD)
-    if not is_dueno(user) and money(user.balance) < fee:
+    if not has_infinite_balance(user) and money(user.balance) < fee:
         await edit_or_answer(callback, "❌ El saldo ya no es suficiente para activar PREMIUN.", premium_menu())
         return
-    if not is_dueno(user):
+    if not has_infinite_balance(user):
         user.balance = money(user.balance) - fee
         session.add(BalanceTransaction(user_id=user.id, kind=BalanceTransactionType.DEBIT, amount=-fee, balance_after=user.balance, reference="premiun", note="Activación PREMIUN"))
         user.total_spent = money(user.total_spent) + fee
@@ -2532,7 +2550,7 @@ async def check_admin(callback: CallbackQuery, session: AsyncSession, current_us
 async def admin_menu(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     user = await check_admin(callback, session, current_user)
     if user:
-        if is_dueno(user):
+        if has_infinite_balance(user):
             await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐃𝐔𝐄𝐍̃𝐎 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n🏆 <b>PANEL DUEÑO</b>\nControl total de la tienda:", admin_home(UserRole.DUENO))
         elif user.role == UserRole.OWNER:
             await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐎𝐖𝐍𝐄𝐑 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n👑 <b>PANEL OWNER</b>\nPanel operativo reducido:", admin_home(UserRole.OWNER))
@@ -2544,7 +2562,7 @@ async def admin_menu(callback: CallbackQuery, session: AsyncSession, current_use
 async def owner_menu(callback: CallbackQuery, session: AsyncSession, current_user: User | None = None):
     user = await check_admin(callback, session, current_user)
     if user and is_owner_role(user):
-        if is_dueno(user):
+        if has_infinite_balance(user):
             await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐃𝐔𝐄𝐍̃𝐎 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n🏆 <b>PANEL DUEÑO</b>\nControl total de la tienda:", admin_home(UserRole.DUENO))
         else:
             await edit_or_answer(callback, "❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐎𝐖𝐍𝐄𝐑 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n\n👑 <b>PANEL OWNER</b>\nPanel operativo reducido:", admin_home(UserRole.OWNER))
