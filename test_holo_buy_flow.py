@@ -57,15 +57,32 @@ async def main():
 
         callback = FakeCallback(424242, f"buyconfirm:{product.id}:7 Días")
         telegram = FakeBot()
-        remote = AsyncMock(return_value={"key": "HOLOVIP-INTEGRATED", "duration": "7 Días", "delivery_text": "KEY ENTREGADA :\\n\\nKEY : HOLOVIP-INTEGRATED\\n\\nDURACIÓN: 7 Días\\n\\nGRACIAS POR TU COMPRA Y TU CONFIANZA"})
-        with patch.object(app, "request_holo_vip_delivery", remote):
+        class RecordingResponse:
+            status = 201
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_): return None
+            async def json(self, content_type=None):
+                return {"success": True, "key": "HOLOVIP-INTEGRATED", "duration": "7 Días", "deliveryText": "KEY ENTREGADA :\\n\\nKEY : HOLOVIP-INTEGRATED\\n\\nDURACIÓN: 7 Días\\n\\nGRACIAS POR TU COMPRA Y TU CONFIANZA"}
+        class RecordingSession:
+            calls = []
+            def __init__(self, *args, **kwargs): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *_): return None
+            def post(self, url, **kwargs):
+                self.calls.append((url, kwargs))
+                return RecordingResponse()
+        app.settings.HOLO_WEBHOOK_URL = "https://web.example/api/webhooks/holo-vip/purchase-confirmed"
+        app.settings.HOLO_WEBHOOK_SECRET = "test-secret"
+        with patch.object(app.aiohttp, "ClientSession", RecordingSession):
             await app.buy_confirm(callback, telegram, session, current_user=customer)
 
         purchase = await session.scalar(select(app.Purchase).where(app.Purchase.user_id == customer.id))
         delivery = await session.scalar(select(app.KeyDelivery).where(app.KeyDelivery.purchase_id == purchase.id))
         assert purchase is not None and purchase.product_name.endswith("(7 Días)")
         assert delivery is not None and delivery.key_value == "HOLOVIP-INTEGRATED" and delivery.duration == "7 Días"
-        remote.assert_awaited_once_with(purchase.order_id, 424242, "7 Días")
+        assert RecordingSession.calls[0][0] == "https://web.example/api/webhooks/holo-vip/purchase-confirmed"
+        assert RecordingSession.calls[0][1]["json"] == {"requestId": purchase.order_id, "product": "HOLO VIP", "duration": "7 Días", "buyerId": "424242", "deviceLimit": 1}
+        assert RecordingSession.calls[0][1]["headers"]["x-holo-webhook-secret"] == "test-secret"
         assert any(chat_id == 424242 and "HOLOVIP-INTEGRATED" in text for chat_id, text in telegram.sent)
 
         failing_callback = FakeCallback(424242, f"buyconfirm:{product.id}:7 Días")
