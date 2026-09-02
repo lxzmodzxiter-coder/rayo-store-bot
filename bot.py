@@ -928,6 +928,20 @@ def is_holo_vip_purchase(product_name: str) -> bool:
     return product_name.strip().upper() in HOLO_PRODUCT_NAMES
 
 
+async def deliver_holo_vip_to_buyer(bot: Bot, telegram_id: int, delivery_text: str, order_id: str) -> bool:
+    try:
+        await bot.send_message(telegram_id, escape(delivery_text))
+        return True
+    except (TelegramForbiddenError, TelegramBadRequest, TelegramNetworkError):
+        logger.warning("Telegram no pudo entregar la key HOLO VIP al comprador %s para %s", telegram_id, order_id, exc_info=True)
+        await notify_staff(bot, f"⚠️ <b>ENTREGA TELEGRAM PENDIENTE</b>\n👤 ID: {telegram_id}\n🧾 Pedido: {order_id}\nLa key fue generada, pero Telegram rechazó el mensaje.")
+        return False
+    except Exception:
+        logger.exception("Fallo inesperado enviando la key HOLO VIP al comprador %s para %s", telegram_id, order_id)
+        await notify_staff(bot, f"⚠️ <b>ENTREGA TELEGRAM PENDIENTE</b>\n👤 ID: {telegram_id}\n🧾 Pedido: {order_id}\nLa key fue generada, pero el envío debe reintentarse.")
+        return False
+
+
 async def request_holo_vip_delivery(order_id: str, telegram_id: int, duration: str) -> dict[str, str]:
     if duration not in HOLO_DURATIONS:
         raise ValueError(f"Duración HOLO VIP no permitida: {duration}")
@@ -1998,7 +2012,7 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
         await callback.message.edit_text(text, reply_markup=nav())
         if holo_delivery:
-            await bot.send_message(user.telegram_id, escape(holo_delivery["delivery_text"]))
+            await deliver_holo_vip_to_buyer(bot, user.telegram_id, holo_delivery["delivery_text"], order_id)
         await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product_name_full}\n💵 {m(total)}\n🧾 {order_id}")
     except Exception:
         await session.rollback()

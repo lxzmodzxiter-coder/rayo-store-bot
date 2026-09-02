@@ -49,6 +49,35 @@ async def run():
     assert "KEY ENTREGADA" in result["delivery_text"]
 
 
+class DeliveryBot:
+    def __init__(self, fail_first=False):
+        self.sent = []
+        self.fail_first = fail_first
+
+    async def send_message(self, chat_id, text, **kwargs):
+        if self.fail_first:
+            self.fail_first = False
+            raise RuntimeError("telegram unavailable")
+        self.sent.append((chat_id, text))
+
+
+async def delivery_checks():
+    success_bot = DeliveryBot()
+    assert await app.deliver_holo_vip_to_buyer(success_bot, 123456789, "KEY ENTREGADA", "LXZ-ORDER-123")
+    assert success_bot.sent[0][0] == 123456789
+    failed_bot = DeliveryBot(fail_first=True)
+    assert not await app.deliver_holo_vip_to_buyer(failed_bot, 123456789, "KEY ENTREGADA", "LXZ-ORDER-124")
+    assert len(failed_bot.sent) == 1
+
+
+_original_run = run
+
+
+async def run_all():
+    await _original_run()
+    await delivery_checks()
+
+
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(run_all())
     print("HOLO_WEBHOOK_CLIENT_OK")
