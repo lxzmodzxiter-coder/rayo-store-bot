@@ -84,6 +84,12 @@ async def main():
         assert RecordingSession.calls[0][1]["json"] == {"requestId": purchase.order_id, "product": "HOLO VIP", "duration": "7 Días", "buyerId": "424242", "deviceLimit": 1}
         assert RecordingSession.calls[0][1]["headers"]["x-holo-webhook-secret"] == "test-secret"
         assert any(chat_id == 424242 and "HOLOVIP-INTEGRATED" in text for chat_id, text in telegram.sent)
+        sent_count = len(telegram.sent)
+        retry = await app.complete_holo_vip_delivery(telegram, session, purchase, customer)
+        assert retry["duplicate"] is True and retry["key"] == "HOLOVIP-INTEGRATED"
+        assert len(telegram.sent) == sent_count
+        deliveries = (await session.execute(select(app.KeyDelivery).where(app.KeyDelivery.purchase_id == purchase.id))).scalars().all()
+        assert len(deliveries) == 1
 
         failing_callback = FakeCallback(424242, f"buyconfirm:{product.id}:7 Días")
         failing_bot = FakeBot()

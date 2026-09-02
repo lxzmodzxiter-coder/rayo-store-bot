@@ -942,6 +942,26 @@ async def deliver_holo_vip_to_buyer(bot: Bot, telegram_id: int, delivery_text: s
         return False
 
 
+async def complete_holo_vip_delivery(bot: Bot, session: AsyncSession, purchase: Purchase, user: User) -> dict[str, str | bool]:
+    existing = await session.scalar(select(KeyDelivery).where(KeyDelivery.purchase_id == purchase.id).limit(1))
+    if existing and purchase.delivered_at:
+        return {"key": existing.key_value, "duration": existing.duration, "delivery_text": purchase.delivery_data or "", "sent": True, "duplicate": True}
+
+    if existing:
+        delivery = {"key": existing.key_value, "duration": existing.duration, "delivery_text": purchase.delivery_data or f"KEY ENTREGADA :\\n\\nKEY : {existing.key_value}\\n\\nDURACIÓN: {existing.duration}\\n\\nGRACIAS POR TU COMPRA Y TU CONFIANZA"}
+    else:
+        delivery = await request_holo_vip_delivery(purchase.order_id, user.telegram_id, purchase_duration(purchase))
+        purchase.delivery_data = delivery["delivery_text"]
+        session.add(KeyDelivery(user_id=user.id, purchase_id=purchase.id, key_value=delivery["key"], duration=delivery["duration"], delivered_by=user.telegram_id))
+        await session.commit()
+
+    sent = await deliver_holo_vip_to_buyer(bot, user.telegram_id, delivery["delivery_text"], purchase.order_id)
+    if sent:
+        purchase.delivered_at = utcnow()
+        await session.commit()
+    return {**delivery, "sent": sent, "duplicate": False}
+
+
 async def request_holo_vip_delivery(order_id: str, telegram_id: int, duration: str) -> dict[str, str]:
     if duration not in HOLO_DURATIONS:
         raise ValueError(f"Duración HOLO VIP no permitida: {duration}")
@@ -1991,28 +2011,22 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         if state:
             await state.clear()
 
-        holo_delivery: dict[str, str] | None = None
+        holo_delivery: dict[str, str | bool] | None = None
         if is_holo_vip_purchase(product.name):
             try:
-                holo_delivery = await request_holo_vip_delivery(order_id, user.telegram_id, variant)
-                purchase.delivery_data = holo_delivery["delivery_text"]
-                purchase.delivered_at = utcnow()
-                session.add(KeyDelivery(user_id=user.id, purchase_id=purchase.id, key_value=holo_delivery["key"], duration=holo_delivery["duration"], delivered_by=user.telegram_id))
-                await session.commit()
+                holo_delivery = await complete_holo_vip_delivery(bot, session, purchase, user)
             except Exception:
-                logger.exception("No se pudo entregar automáticamente la key HOLO VIP para %s", order_id)
+                logger.exception("No se pudo generar automáticamente la key HOLO VIP para %s", order_id)
                 await notify_staff(bot, f"⚠️ <b>ENTREGA HOLO VIP PENDIENTE</b>\n👤 {name_of(user)} ({user.telegram_id})\n🧾 {order_id}\nLa compra fue registrada, pero el webhook no respondió correctamente.")
 
-        if holo_delivery:
-            delivery = f"\n\n📦 <b>ENTREGA HOLO VIP:</b>\n{escape(holo_delivery['delivery_text'])}"
+        if holo_delivery and holo_delivery.get("sent"):
+            delivery = f"\n\n📦 <b>ENTREGA HOLO VIP:</b>\n{escape(str(holo_delivery['delivery_text']))}"
         elif is_holo_vip_purchase(product.name):
             delivery = "\n\n📦 <b>Entrega HOLO VIP pendiente:</b> soporte/admin debe revisar el webhook."
         else:
             delivery = f"\n\n📦 <b>DATOS DE ENTREGA:</b>\n<code>{product.delivery_data}</code>" if product.delivery_data else "\n\n📦 Entrega: el administrador procesará tu pedido."
         text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
         await callback.message.edit_text(text, reply_markup=nav())
-        if holo_delivery:
-            await deliver_holo_vip_to_buyer(bot, user.telegram_id, holo_delivery["delivery_text"], order_id)
         await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product_name_full}\n💵 {m(total)}\n🧾 {order_id}")
     except Exception:
         await session.rollback()
