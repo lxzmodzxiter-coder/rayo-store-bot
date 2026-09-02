@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import aiohttp
 import logging
 import math
 import secrets
@@ -108,6 +109,9 @@ class Settings(BaseSettings):
     PARTNER_DISCOUNT_PERCENT: Decimal = Decimal("20.00")
     PREMIUN_FEE_USD: Decimal = Decimal("5.00")
     PREMIUN_DISCOUNT_PERCENT: Decimal = Decimal("10.00")
+    HOLO_WEBHOOK_URL: str = ""
+    HOLO_WEBHOOK_SECRET: str = ""
+    HOLO_WEBHOOK_TIMEOUT_SECONDS: float = 12.0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -907,6 +911,10 @@ async def product_variant_rows(session: AsyncSession, product_id: int) -> list[P
     return list((await session.execute(select(ProductVariant).where(ProductVariant.product_id == product_id).order_by(ProductVariant.id))).scalars().all())
 
 
+HOLO_DURATIONS = {"1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente"}
+HOLO_PRODUCT_NAMES = {"HOLO VIP", "PROYECTO HOLOGRAMA VIP", "PANEL HOLO VIP"}
+
+
 def purchase_duration(purchase: Purchase) -> str:
     product_name = (purchase.product_name or "").strip()
     if product_name.endswith(")") and "(" in product_name:
@@ -914,6 +922,30 @@ def purchase_duration(purchase: Purchase) -> str:
         if duration:
             return duration
     return "No especificada"
+
+
+def is_holo_vip_purchase(product_name: str) -> bool:
+    return product_name.strip().upper() in HOLO_PRODUCT_NAMES
+
+
+async def request_holo_vip_delivery(order_id: str, telegram_id: int, duration: str) -> dict[str, str]:
+    if duration not in HOLO_DURATIONS:
+        raise ValueError(f"Duración HOLO VIP no permitida: {duration}")
+    if not settings.HOLO_WEBHOOK_URL or not settings.HOLO_WEBHOOK_SECRET:
+        raise RuntimeError("HOLO_WEBHOOK_URL/HOLO_WEBHOOK_SECRET no configurados")
+    payload = {"requestId": order_id, "product": "HOLO VIP", "duration": duration, "buyerId": str(telegram_id), "deviceLimit": 1}
+    timeout = aiohttp.ClientTimeout(total=max(3.0, settings.HOLO_WEBHOOK_TIMEOUT_SECONDS))
+    headers = {"content-type": "application/json", "x-holo-webhook-secret": settings.HOLO_WEBHOOK_SECRET}
+    async with aiohttp.ClientSession(timeout=timeout) as client:
+        async with client.post(settings.HOLO_WEBHOOK_URL.rstrip("/"), json=payload, headers=headers) as response:
+            body = await response.json(content_type=None)
+            if response.status not in (200, 201) or not body.get("success"):
+                raise RuntimeError(f"Webhook HOLO VIP respondió HTTP {response.status}: {body.get('message', 'error desconocido')}")
+            delivery_text = str(body.get("deliveryText", "")).strip()
+            returned_duration = str(body.get("duration", "")).strip()
+            if not delivery_text or not body.get("key") or returned_duration != duration:
+                raise RuntimeError("La respuesta del webhook no contiene una key y duración válidas")
+            return {"key": str(body["key"]), "duration": returned_duration, "delivery_text": delivery_text}
 def name_of(user: User) -> str:
     return " ".join(x for x in [user.first_name, user.last_name] if x) or str(user.telegram_id)
 
@@ -1944,9 +1976,29 @@ async def buy_confirm(callback: CallbackQuery, bot: Bot, session: AsyncSession, 
         await session.commit()
         if state:
             await state.clear()
-        delivery = f"\n\n📦 <b>DATOS DE ENTREGA:</b>\n<code>{product.delivery_data}</code>" if product.delivery_data else "\n\n📦 Entrega: el administrador procesará tu pedido."
+
+        holo_delivery: dict[str, str] | None = None
+        if is_holo_vip_purchase(product.name):
+            try:
+                holo_delivery = await request_holo_vip_delivery(order_id, user.telegram_id, variant)
+                purchase.delivery_data = holo_delivery["delivery_text"]
+                purchase.delivered_at = utcnow()
+                session.add(KeyDelivery(user_id=user.id, purchase_id=purchase.id, key_value=holo_delivery["key"], duration=holo_delivery["duration"], delivered_by=user.telegram_id))
+                await session.commit()
+            except Exception:
+                logger.exception("No se pudo entregar automáticamente la key HOLO VIP para %s", order_id)
+                await notify_staff(bot, f"⚠️ <b>ENTREGA HOLO VIP PENDIENTE</b>\n👤 {name_of(user)} ({user.telegram_id})\n🧾 {order_id}\nLa compra fue registrada, pero el webhook no respondió correctamente.")
+
+        if holo_delivery:
+            delivery = f"\n\n📦 <b>ENTREGA HOLO VIP:</b>\n{escape(holo_delivery['delivery_text'])}"
+        elif is_holo_vip_purchase(product.name):
+            delivery = "\n\n📦 <b>Entrega HOLO VIP pendiente:</b> soporte/admin debe revisar el webhook."
+        else:
+            delivery = f"\n\n📦 <b>DATOS DE ENTREGA:</b>\n<code>{product.delivery_data}</code>" if product.delivery_data else "\n\n📦 Entrega: el administrador procesará tu pedido."
         text = f"✅ <b>COMPRA EXITOSA</b>\n\n📦 Producto: {product_name_full}\n💵 Pagado: {m(total)}\n💰 Saldo restante: {balance_display(user)}\n🧾 Pedido: <code>{order_id}</code>\n📅 Fecha: {now_text()}{delivery}"
         await callback.message.edit_text(text, reply_markup=nav())
+        if holo_delivery:
+            await bot.send_message(user.telegram_id, escape(holo_delivery["delivery_text"]))
         await notify_staff(bot, f"🛒 <b>NUEVA VENTA</b>\n👤 {name_of(user)} ({user.telegram_id})\n📦 {product_name_full}\n💵 {m(total)}\n🧾 {order_id}")
     except Exception:
         await session.rollback()

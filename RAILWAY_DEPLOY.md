@@ -44,3 +44,17 @@ PLIN_NAME=...
 ```
 
 `OWNER_ID` debe contener únicamente tu ID numérico de Telegram. Configura los números y nombres de pago de Perú como variables privadas (`YAPE_NUMBER`, `YAPE_NAME`, `LIGO_NUMBER`, `LIGO_NAME`, `PLIN_NUMBER` y `PLIN_NAME`) para que el bot los muestre sin guardarlos en GitHub. No compartas el token del bot, claves de OpenAI ni credenciales de pagos por chat.
+
+## Integración automática HOLO VIP
+
+El bot ya contiene el flujo de entrega automática para los productos cuyo nombre sea `HOLO VIP`, `PROYECTO HOLOGRAMA VIP` o `PANEL HOLO VIP`. Después de confirmar una compra, envía a la web el comprador, el pedido y la variante de duración. La web genera la key correspondiente y devuelve el texto de entrega; el bot lo envía al mismo `telegram_id` y registra la entrega en `key_deliveries`.
+
+Añade estas Variables privadas en Railway:
+
+```text
+HOLO_WEBHOOK_URL=https://ezteamweb-qyebjgnv.manus.space/api/webhooks/holo-vip/purchase-confirmed
+HOLO_WEBHOOK_SECRET=el_mismo_secreto_configurado_en_la_web
+HOLO_WEBHOOK_TIMEOUT_SECONDS=12
+```
+
+La web acepta el secreto mediante el header `x-holo-webhook-secret`. El `requestId` es el `order_id` de la compra; si el bot reintenta la solicitud, la web devuelve la misma key en vez de crear otra. El flujo admite exactamente `1 Día`, `3 Días`, `7 Días`, `15 Días`, `30 Días` y `Permanente`. Si falta la URL o el secreto, la compra queda registrada y se avisa al personal como entrega pendiente; no se inventa una key ni se entrega una duración distinta.
