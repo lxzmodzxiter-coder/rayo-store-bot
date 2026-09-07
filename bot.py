@@ -415,20 +415,19 @@ def kb(rows):
 
 def main_menu(role: UserRole, channel_url: str = "") -> InlineKeyboardMarkup:
     rows = [
-        [("🛍️ Catálogo de Productos", "menu:catalog", None)],
-        [("🔨 SUBASTAS", "menu:auctions", None)],
-        [("💳 Recargar Saldo", "menu:balance", None), ("👤 Mi Perfil", "menu:profile", None)],
-        [("💎 PREMIUN (10% OFF)", "menu:premium", None), ("🤝 SOCIO (20% OFF)", "menu:partner", None)],
-        [("🎟️ Canjear Cupón", "menu:coupons", None), ("📞 Soporte", None, "https://t.me/Lxz_Modz")],
+        [("🛍️ Catálogo", "menu:catalog", None)],
+        [("💳 Recargar saldo", "menu:balance", None), ("👤 Mi perfil", "menu:profile", None)],
+        [("🧾 Mis compras", "menu:purchases", None), ("🎟️ Cupón", "menu:coupons", None)],
+        [("📞 Soporte", None, "https://t.me/Lxz_Modz")],
     ]
     if channel_url:
-        rows[-1].append(("📢 Canal Oficial", None, channel_url))
+        rows[-1].append(("📢 Canal oficial", None, channel_url))
     if role == UserRole.DUENO:
-        rows.append([("🏆 Panel DUEÑO", "owner:home", None)])
+        rows.append([("🏆 Panel de dueño", "owner:home", None)])
     elif role == UserRole.OWNER:
-        rows.append([("👑 Panel OWNER", "owner:home", None)])
+        rows.append([("👑 Panel de owner", "owner:home", None)])
     elif role == UserRole.ADMIN:
-        rows.append([("⚙️ Panel ADMIN", "admin:home", None)])
+        rows.append([("⚙️ Panel de administración", "admin:home", None)])
     return kb(rows)
 
 
@@ -649,22 +648,7 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = max(1, settings.PAGE_SIZE)
 CATEGORIES = ["Android", "iOS", "PC", "Otros"]
 CATEGORY_LABELS = {"Android": "📁 APK MODZ / ANDROID", "iOS": "📁 IPHONE / IOS", "PC": "💻 WINDOWS / PC", "Otros": "📁 OTROS"}
-IMAGE_BY_PRODUCT = {
-    "DRIP CLIENT": "assets/drip_client_android.jpg",
-    "PRÓXY ANDROID": "assets/drip_client_free_fire.jpg",
-    "HG CHEATS": "assets/hg_cheats.jpg",
-    "PROXY MENÚ": "assets/proxy_menu_hg_cheats.jpg",
-    "PROYECTO HOLOGRAMA VIP": "assets/proyecto_holograma_vip.jpg",
-    "PROXY POTATSO": "assets/proxy_potatso_ios.jpg",
-    "E-SIGN": "assets/esign.jpg",
-    "FLOURITE": "assets/flourite.jpg",
-    "CUBAN MODS": "assets/cuban_mods.jpg",
-    "PATO TEAM": "assets/pato_team.jpg",
-    "BR MODS PC": "assets/br_mods_pc.jpg",
-    "BYPASS UID": "assets/bypass_uid.jpg",
-    "NUMEROS VIRTUALES (PARA WHATSAPP)": "assets/numeros_virtuales_whatsapp.jpg",
-    "PLATAFORMA STREAMING": "assets/plataforma_streaming.jpg",
-}
+IMAGE_BY_PRODUCT = {}
 
 
 HOME_BANNER = "assets/lxz_store_banner.png"
@@ -746,49 +730,11 @@ CRYPTO_NETWORK_CONFIG = {
 }
 
 
-INITIAL_PRODUCTS = {
-    "Android": [
-        "PRÓXY ANDROID", "DRIP CLIENT", "BR MODS MÓVIL - ROOT", "PATO TEAM", "CUBAN MODS",
-        "HG CHEATS", "PRIME HOCK APK", "PROXY MENÚ", "PROYECTO HOLOGRAMA VIP", "PATO REGEDIT", "BALA MOD ANDROID",
-        "PROXY HG CHEATS", "PANEL HOLO VIP", "PROXY DRIP",
-    ],
-    "iOS": ["PROXY POTATSO", "CERTIFICADO IPHONE", "E-Sign", "FLOURITE", "MONITE CHEATS IPHONE", "MONITE IOS PRO", "MONITE IOS BASIC", "GBOX CERTIFICADO", "MIGUIL MONITE LITE", "MIGUIL MONITE PRO"],
-    "PC": ["BYPASS UID", "BR MODS PC", "AIMKILL PC"],
-    "Otros": ["NUMEROS VIRTUALES (Para WhatsApp)", "PLATAFORMA STREAMING"],
-}
+INITIAL_PRODUCTS = {"Android": [], "iOS": [], "PC": [], "Otros": []}
 
-# Prices supplied by the owner. The first variant is also the base display price.
-PRICE_CATALOG = {
-    "PRÓXY ANDROID": [("1 Día", "2.00"), ("3 Días", "3.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
-    "DRIP CLIENT": [("7 Días", "6.00"), ("30 Días", "12.00"), ("Permanente", "50.00")],
-    "BR MODS MÓVIL - ROOT": [("1 Día", "2.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
-    "PATO TEAM": [("3 Días", "3.00"), ("7 Días", "8.00"), ("15 Días", "6.00"), ("30 Días", "15.00")],
-    "CUBAN MODS": [("1 Día", "2.00"), ("7 Días", "7.00"), ("30 Días", "12.00")],
-    "HG CHEATS": [("1 Día", "3.00"), ("10 Días", "8.00"), ("30 Días", "14.00")],
-    "PROXY POTATSO": [("1 Día", "2.00"), ("7 Días", "4.00"), ("30 Días", "18.00"), ("Keis Ilimitadas", "25.00")],
-    "CERTIFICADO IPHONE": [("360 Días", "10.00")],
-    "FLOURITE": [("1 Día", "5.00"), ("7 Días", "15.00"), ("30 Días", "31.00"), ("Permanente", "100.00")],
-    "BR MODS PC": [("1 Día", "3.00"), ("10 Días", "7.00"), ("30 Días", "15.00")],
-    "AIMKILL PC": [("1 Día", "3.00"), ("7 Días", "7.00"), ("30 Días", "15.00"), ("365 Días", "30.00")],
-    "PATO REGEDIT": [("1 Hora", "1.00"), ("3 Horas", "2.00"), ("6 Horas", "3.00"), ("12 Horas", "5.00"), ("1 Día", "8.00"), ("2 Días", "12.00"), ("3 Días", "15.00"), ("7 Días", "20.00")],
-    "BALA MOD ANDROID": [("1 Hora", "1.00"), ("3 Horas", "2.00"), ("6 Horas", "3.00"), ("12 Horas", "5.00"), ("1 Día", "8.00"), ("2 Días", "12.00"), ("3 Días", "15.00"), ("7 Días", "20.00")],
-    "PROXY HG CHEATS": [("1 Día", "3.00"), ("10 Días", "6.00"), ("21 Días", "12.00")],
-    "PANEL HOLO VIP": [("30 Días", "15.00"), ("Permanente", "40.00")],
-    "PROXY DRIP": [("1 Día", "3.00"), ("7 Días", "7.00"), ("30 Días", "15.00")],
-    "MIGUIL MONITE LITE": [("1 Día", "3.00"), ("7 Días", "8.00"), ("30 Días", "15.00")],
-    "MIGUIL MONITE PRO": [("1 Día", "5.00"), ("7 Días", "15.00"), ("31 Días", "31.00")],
-    "MONITE CHEATS IPHONE": [("1 Mes", "25.00"), ("3 Meses", "50.00"), ("Permanente", "150.00")],
-    "PROXY MENÚ": [("1 Día", "0.70"), ("10 Días", "8.00")],
-    "PROYECTO HOLOGRAMA VIP": [("30 Días", "9.90"), ("Permanente", "29.90")],
-    "E-Sign": [("360 Días", "10.00")],
-    "BYPASS UID": [("30 Días", "10.00"), ("Permanente", "40.00")],
-    "NUMEROS VIRTUALES (Para WhatsApp)": [("Acceso", "10.00")],
-    "PLATAFORMA STREAMING": [("Acceso", "25.00")],
-    "MONITE IOS PRO": [("1 Día", "5.00"), ("7 Días", "15.00"), ("31 Días", "31.00")],
-    "MONITE IOS BASIC": [("1 Día", "3.00"), ("7 Días", "8.00"), ("30 Días", "15.00")],
-    "GBOX CERTIFICADO": [("360 Días", "10.00")],
-    "PRIME HOCK APK": [("1 Día", "5.00")],
-}
+# El catálogo se carga únicamente desde fuentes autorizadas.
+PRICE_CATALOG = {}
+
 STANDARD_DURATIONS = ("1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente")
 
 def complete_price_variants(name: str, variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -1217,15 +1163,10 @@ async def show_home(target: Message | CallbackQuery, user: User) -> None:
         admin_commands += "\n<code>/agregas</code> · <code>/actualizarstock</code> · <code>/key ID KEY</code>"
     if is_owner_role(user):
         admin_commands += "\n<code>/broadcast</code> · <code>/saldo ID CANTIDAD USD</code>"
-    role_display = f"\n🗝 𝐏𝐞𝐫𝐦𝐢𝐬𝐨𝐬: {user.role.value} — 𝐀𝐂𝐂𝐄𝐒𝐒"
-    benefit_display = "\n♾️ 𝐁𝐞𝐧𝐞𝐟𝐢𝐜𝐢𝐨: Saldo infinito" if has_infinite_balance(user) else ""
-    text = (f"❰ ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐂𝐎𝐌𝐌𝐀𝐍𝐃 𝐂𝐄𝐍𝐓𝐄𝐑 ❱\n"
-            f"💮 ʟxᴢ • 𝐍𝐞𝐨-𝐒𝐲𝐬𝐭𝐞𝐦 • 𝐍𝐞𝐭𝐰𝐨𝐫𝐤 💮\n\n"
-            f"👤 𝐔𝐬𝐮𝐚𝐫𝐢𝐨: {name_of(user)} | <code>{user.telegram_id}</code>{role_display}\n"
-            f"💰 𝐒𝐚𝐥𝐝𝐨: {balance_display(user)}{benefit_display}\n\n"
-            f"🤖 ʟxᴢ ꜱᴛᴏʀᴇ ʙᴇꜱᴛ — 𝐎𝐍𝐋𝐈𝐍𝐄\n"
-            f"⚡ 𝐕𝐞𝐥𝐨𝐜𝐢𝐝𝐚𝐝 • 🛡 𝐒𝐞𝐠𝐮𝐫𝐢𝐝𝐚𝐝 • 🎯 𝐏𝐫𝐞𝐜𝐢𝐬𝐢𝐨́𝐧\n\n"
-            f"🔥 「 𝐂𝐨𝐧𝐭𝐫𝐨𝐥𝐚 𝐞𝐥 𝐬𝐢𝐬𝐭𝐞𝐦𝐚 」 🔥{admin_commands}")
+    text = (f"🛍️ <b>{escape(settings.STORE_NAME)}</b>\n\n"
+            f"👋 Hola, <b>{escape(name_of(user))}</b>\n"
+            f"💰 Saldo disponible: {balance_display(user)}\n\n"
+            "Explora el catálogo, consulta tu perfil y recibe ayuda cuando la necesites.")
     markup = main_menu(user.role, settings.OFFICIAL_CHANNEL_URL)
     try:
         if isinstance(target, CallbackQuery):
@@ -1283,6 +1224,17 @@ async def activate_new_catalog_products_once(session: AsyncSession) -> None:
             product.stock = 5
             product.is_active = True
     session.add(StoreSetting(key=marker_key, value="new_catalog_products_stock_5"))
+
+
+async def clear_legacy_catalog(session: AsyncSession) -> None:
+    """Remove bundled products and variants without touching users or purchases."""
+    marker_key = "legacy_catalog_cleared_v1"
+    if await session.get(StoreSetting, marker_key):
+        return
+    await session.execute(text("DELETE FROM product_variants"))
+    await session.execute(text("DELETE FROM products"))
+    session.add(StoreSetting(key=marker_key, value="products_and_variants_removed"))
+    await session.flush()
 
 
 async def seed_initial_products(session: AsyncSession) -> None:
@@ -1845,7 +1797,7 @@ async def render_products(callback: CallbackQuery, session: AsyncSession, catego
         await callback.message.delete()
     except TelegramBadRequest:
         pass
-    cat_image = "assets/proyecto_holograma_vip.jpg" if category == "Android" else ("assets/proxy_potatso_ios.jpg" if category == "iOS" else "assets/br_mods_pc.jpg")
+    cat_image = HOME_BANNER
     if Path(cat_image).is_file():
         await callback.message.answer_photo(FSInputFile(cat_image), caption=text, reply_markup=markup)
         await callback.answer()
@@ -3286,6 +3238,7 @@ async def main() -> None:
         await conn.run_sync(migrate_schema)
     logger.info("📦 Tablas y migraciones de la base de datos verificadas/creadas con éxito.")
     async with async_session_maker() as seed_session:
+        await clear_legacy_catalog(seed_session)
         await seed_initial_products(seed_session)
 
     # FSM en memoria: no requiere Redis y reduce el consumo del plan gratuito.
