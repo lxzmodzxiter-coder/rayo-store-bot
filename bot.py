@@ -648,14 +648,17 @@ logger = logging.getLogger(__name__)
 PAGE_SIZE = max(1, settings.PAGE_SIZE)
 CATEGORIES = ["Android", "iOS", "PC", "Otros"]
 CATEGORY_LABELS = {"Android": "📁 APK MODZ / ANDROID", "iOS": "📁 IPHONE / IOS", "PC": "💻 WINDOWS / PC", "Otros": "📁 OTROS"}
-IMAGE_BY_PRODUCT = {}
+IMAGE_BY_PRODUCT = {
+    "EXTERNAL ANDROID": "assets/external_android.webp",
+    "PROXY ADVANCED REMOTE": "assets/proxy_ios.webp",
+}
 
 
 HOME_BANNER = "assets/lxz_store_banner.png"
 
 
 def image_for_product(name: str) -> str | None:
-    return IMAGE_BY_PRODUCT.get(name.strip().upper())
+    return IMAGE_BY_PRODUCT.get(name.strip().upper()) or HOME_BANNER
 
 
 TOPUP_REGIONS = {
@@ -730,10 +733,20 @@ CRYPTO_NETWORK_CONFIG = {
 }
 
 
-INITIAL_PRODUCTS = {"Android": [], "iOS": [], "PC": [], "Otros": []}
+INITIAL_PRODUCTS = {
+    "Android": ["EXTERNAL ANDROID", "PROXY MENU ANDROID", "PROXY ANDROID"],
+    "iOS": ["PROXY ADVANCED REMOTE"],
+    "PC": [],
+    "Otros": [],
+}
 
 # El catálogo se carga únicamente desde fuentes autorizadas.
-PRICE_CATALOG = {}
+PRICE_CATALOG = {
+    "EXTERNAL ANDROID": [("1 Día", "4"), ("3 Días", "7"), ("7 Días", "12"), ("15 Días", "18"), ("30 Días", "25"), ("Permanente", "40")],
+    "PROXY MENU ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "6"), ("15 Días", "8"), ("30 Días", "10"), ("Permanente", "15")],
+    "PROXY ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "7"), ("15 Días", "10"), ("30 Días", "15"), ("Permanente", "25")],
+    "PROXY ADVANCED REMOTE": [("1 Día", "4"), ("3 Días", "6"), ("7 Días", "9"), ("15 Días", "14"), ("30 Días", "20"), ("Permanente", "30")],
+}
 
 STANDARD_DURATIONS = ("1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente")
 
