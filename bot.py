@@ -734,18 +734,39 @@ CRYPTO_NETWORK_CONFIG = {
 
 
 INITIAL_PRODUCTS = {
-    "Android": ["EXTERNAL ANDROID", "PROXY MENU ANDROID", "PROXY ANDROID"],
-    "iOS": ["PROXY ADVANCED REMOTE"],
-    "PC": [],
-    "Otros": [],
+    "Android": [
+        "EXTERNAL ANDROID", "PROXY MENU ANDROID", "PROXY ANDROID", "HGFFH4X KEY",
+        "PROXY KEY HG", "BYPASS PLAY STORE", "PANEL ANDROID", "PANEL ANDROID RAGE",
+        "HS PROXY ANDROID", "PANEL ANDROID APK MOD", "BYPASS ANDROID", "AUXILIO ANDROID",
+        "COMBO HS PROXY ANDROID",
+    ],
+    "iOS": [
+        "PROXY ADVANCED REMOTE", "CERTIFICADO GBOX", "PANEL IPHONE SAFE",
+        "HS PROXY IPHONE", "PROXY IPHONE EXTERNAL", "AUXILIO IPHONE", "RESET UDID",
+        "CERTIFICADO GBOX IOS", "AUXILIO PREMIUM",
+    ],
+    "PC": ["PANEL EMULADOR"],
+    "Otros": [
+        "COMBO DE KEYS APKMOD", "CUENTA GUEST NIVEL 15-20", "CUENTA LEVEL 20-30",
+        "PASSADOR DE REPLAY", "CERTIFICADO BYPASS",
+    ],
 }
 
-# El catálogo se carga únicamente desde fuentes autorizadas.
+# Precios de venta fijos en USD, definidos para la tienda y sin decimales.
+_PRICE_TIERS = {
+    "standard": [("1 Día", "4"), ("3 Días", "7"), ("7 Días", "12"), ("15 Días", "18"), ("30 Días", "25"), ("Permanente", "40")],
+    "ios": [("1 Día", "5"), ("3 Días", "8"), ("7 Días", "13"), ("15 Días", "20"), ("30 Días", "28"), ("Permanente", "45")],
+    "other": [("1 Día", "3"), ("3 Días", "5"), ("7 Días", "8"), ("15 Días", "12"), ("30 Días", "18"), ("Permanente", "25")],
+}
 PRICE_CATALOG = {
     "EXTERNAL ANDROID": [("1 Día", "4"), ("3 Días", "7"), ("7 Días", "12"), ("15 Días", "18"), ("30 Días", "25"), ("Permanente", "40")],
     "PROXY MENU ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "6"), ("15 Días", "8"), ("30 Días", "10"), ("Permanente", "15")],
     "PROXY ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "7"), ("15 Días", "10"), ("30 Días", "15"), ("Permanente", "25")],
     "PROXY ADVANCED REMOTE": [("1 Día", "4"), ("3 Días", "6"), ("7 Días", "9"), ("15 Días", "14"), ("30 Días", "20"), ("Permanente", "30")],
+    **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["Android"] if name not in {"EXTERNAL ANDROID", "PROXY MENU ANDROID", "PROXY ANDROID"}},
+    **{name: _PRICE_TIERS["ios"] for name in INITIAL_PRODUCTS["iOS"] if name != "PROXY ADVANCED REMOTE"},
+    **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["PC"]},
+    **{name: _PRICE_TIERS["other"] for name in INITIAL_PRODUCTS["Otros"]},
 }
 
 STANDARD_DURATIONS = ("1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente")
