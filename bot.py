@@ -754,7 +754,7 @@ SUBCATEGORY_PRODUCTS = {
         "HOLOGRAMAS": ["HOLOGRAMA / AIMBOT ANDROID"],
     },
     "iOS": {
-        "APK MOD": ["PANEL RAGE & SAFE IOS", "CERTIFICADO GBOX IOS", "FLOURITE IOS", "EXTERNAL IOS", "HEADTRICK IOS", "SENSIBILIDAD IOS", "BYPASS IOS"],
+        "APK MOD": ["PANEL RAGE & SAFE IOS", "CERTIFICADO GBOX IOS", "FLOURITE IOS", "EXTERNAL IOS", "HEADTRICK IOS", "SENSIBILIDAD IOS", "BYPASS IOS", "MONITE IOS"],
         "PROXYS": ["PROXY GERAL IOS", "PROXY EXTERNAL IOS"],
         "HOLOGRAMAS": ["HOLOGRAMA IOS"],
     },
@@ -775,6 +775,7 @@ PRICE_CATALOG = {
     "PROXY MENU ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "6"), ("15 Días", "8"), ("30 Días", "10"), ("Permanente", "15")],
     "PROXY ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "7"), ("15 Días", "10"), ("30 Días", "15"), ("Permanente", "25")],
     "PROXY ADVANCED REMOTE": [("1 Día", "4"), ("3 Días", "6"), ("7 Días", "9"), ("15 Días", "14"), ("30 Días", "20"), ("Permanente", "30")],
+    "MONITE IOS": [("Basic", "5"), ("Pro", "8")],
     **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["Android"] if name != "PROXY MENU ANDROID"},
     **{name: _PRICE_TIERS["ios"] for name in INITIAL_PRODUCTS["iOS"]},
     **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["PC"]},
@@ -784,6 +785,8 @@ PRICE_CATALOG = {
 STANDARD_DURATIONS = ("1 Día", "3 Días", "7 Días", "15 Días", "30 Días", "Permanente")
 
 def complete_price_variants(name: str, variants: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if variants and {label.casefold() for label, _ in variants} == {"basic", "pro"}:
+        return [(label, str(money(price))) for label, price in variants]
     source = {}
     for label, raw in variants:
         digits = "".join(ch for ch in label if ch.isdigit())
