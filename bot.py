@@ -446,6 +446,20 @@ def categories(categories: list[str]) -> InlineKeyboardMarkup:
     return kb(rows)
 
 
+SUBCATEGORY_LABELS = {
+    "APK MOD": "🧩 APK MOD",
+    "PROXYS": "🌐 PROXYS",
+    "HOLOGRAMAS": "✨ HOLOGRAMAS",
+    "OTROS": "📦 OTROS",
+}
+
+
+def subcategories(category: str) -> InlineKeyboardMarkup:
+    rows = [[(label, f"subcat:{category}:{group}", None)] for group, label in SUBCATEGORY_LABELS.items() if SUBCATEGORY_PRODUCTS.get(category, {}).get(group)]
+    rows.append([("⬅️ Categorías", "menu:catalog", None), ("🏠 Inicio", "menu:home", None)])
+    return kb(rows)
+
+
 def product_list(items, page: int, pages: int, category: str) -> InlineKeyboardMarkup:
     rows = [[(f"📦 {p.name} 📥", f"product:{p.id}", None)] for p in items]
     pager = []
@@ -733,24 +747,22 @@ CRYPTO_NETWORK_CONFIG = {
 }
 
 
-INITIAL_PRODUCTS = {
-    "Android": [
-        "EXTERNAL ANDROID", "PROXY MENU ANDROID", "PROXY ANDROID", "HGFFH4X KEY",
-        "PROXY KEY HG", "BYPASS PLAY STORE", "PANEL ANDROID", "PANEL ANDROID RAGE",
-        "HS PROXY ANDROID", "PANEL ANDROID APK MOD", "BYPASS ANDROID", "AUXILIO ANDROID",
-        "COMBO HS PROXY ANDROID",
-    ],
-    "iOS": [
-        "PROXY ADVANCED REMOTE", "CERTIFICADO GBOX IOS", "PANEL IPHONE SAFE",
-        "HS PROXY IPHONE", "PROXY IPHONE EXTERNAL", "AUXILIO IPHONE", "RESET UDID",
-        "AUXILIO PREMIUM",
-    ],
-    "PC": ["PANEL EMULADOR"],
-    "Otros": [
-        "COMBO DE KEYS APKMOD", "CUENTA GUEST NIVEL 15-20", "CUENTA LEVEL 20-30",
-        "PASSADOR DE REPLAY", "CERTIFICADO BYPASS",
-    ],
+SUBCATEGORY_PRODUCTS = {
+    "Android": {
+        "APK MOD": ["PANEL RAGE & SAFE ANDROID", "DRIP CLIENT ANDROID", "HEADTRICK ANDROID", "MONITE ANDROID", "BYPASS ANDROID", "SENSIBILIDAD ANDROID"],
+        "PROXYS": ["PROXY GERAL & BYPASS ANDROID", "PROXY MENU ANDROID", "HS / 0 DELAY ANDROID", "PROXY VIA DISCORD ANDROID"],
+        "HOLOGRAMAS": ["HOLOGRAMA / AIMBOT ANDROID"],
+    },
+    "iOS": {
+        "APK MOD": ["PANEL RAGE & SAFE IOS", "CERTIFICADO GBOX IOS", "FLOURITE IOS", "EXTERNAL IOS", "HEADTRICK IOS", "SENSIBILIDAD IOS", "BYPASS IOS"],
+        "PROXYS": ["PROXY GERAL IOS", "PROXY EXTERNAL IOS"],
+        "HOLOGRAMAS": ["HOLOGRAMA IOS"],
+    },
+    "PC": {"APK MOD": ["PANEL EMULADOR (FFH4X) PC"]},
+    "Otros": {"APK MOD": ["FREEFIRE 2022 / XIT FF 2022", "TEXTURA SKINS / GRAFICOS BAJO"], "PROXYS": ["COMBO HS PROXY"], "HOLOGRAMAS": [],
+              "OTROS": ["PAQUETE DE CUENTAS NIVEL 20 A 30", "PASSADOR DE REPLAY", "CERTIFICADO BYPASS", "RESET UDID", "COMBO DE KEYS APKMOD"]},
 }
+INITIAL_PRODUCTS = {category: [name for group in groups.values() for name in group] for category, groups in SUBCATEGORY_PRODUCTS.items()}
 
 # Precios de venta fijos en USD, definidos para la tienda y sin decimales.
 _PRICE_TIERS = {
@@ -763,8 +775,8 @@ PRICE_CATALOG = {
     "PROXY MENU ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "6"), ("15 Días", "8"), ("30 Días", "10"), ("Permanente", "15")],
     "PROXY ANDROID": [("1 Día", "4"), ("3 Días", "5"), ("7 Días", "7"), ("15 Días", "10"), ("30 Días", "15"), ("Permanente", "25")],
     "PROXY ADVANCED REMOTE": [("1 Día", "4"), ("3 Días", "6"), ("7 Días", "9"), ("15 Días", "14"), ("30 Días", "20"), ("Permanente", "30")],
-    **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["Android"] if name not in {"EXTERNAL ANDROID", "PROXY MENU ANDROID", "PROXY ANDROID"}},
-    **{name: _PRICE_TIERS["ios"] for name in INITIAL_PRODUCTS["iOS"] if name != "PROXY ADVANCED REMOTE"},
+    **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["Android"] if name != "PROXY MENU ANDROID"},
+    **{name: _PRICE_TIERS["ios"] for name in INITIAL_PRODUCTS["iOS"]},
     **{name: _PRICE_TIERS["standard"] for name in INITIAL_PRODUCTS["PC"]},
     **{name: _PRICE_TIERS["other"] for name in INITIAL_PRODUCTS["Otros"]},
 }
@@ -1272,6 +1284,8 @@ async def clear_legacy_catalog(session: AsyncSession) -> None:
 
 
 async def seed_initial_products(session: AsyncSession) -> None:
+    current_names = set(INITIAL_PRODUCTS["Android"] + INITIAL_PRODUCTS["iOS"] + INITIAL_PRODUCTS["PC"] + INITIAL_PRODUCTS["Otros"])
+    await session.execute(update(Product).where(Product.name.not_in(current_names)).values(is_active=False, stock=0))
     for legacy, current in LEGACY_CATEGORY_MAP.items():
         await session.execute(update(Product).where(Product.category == legacy).values(category=current))
     for category, names in INITIAL_PRODUCTS.items():
@@ -1817,15 +1831,17 @@ async def menu_catalog(callback: CallbackQuery, session: AsyncSession):
 
 
 async def render_products(callback: CallbackQuery, session: AsyncSession, category: str, page: int):
-    query = select(Product).where(Product.category == category).order_by(Product.id.desc())
+    category_name, _, group = category.partition("|")
+    allowed_names = SUBCATEGORY_PRODUCTS.get(category_name, {}).get(group, [])
+    query = select(Product).where(Product.category == category_name, Product.name.in_(allowed_names)).order_by(Product.id.desc())
     all_items = (await session.execute(query)).scalars().all()
     pages = max(1, math.ceil(len(all_items) / PAGE_SIZE))
     page = max(0, min(page, pages - 1))
     items = all_items[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
     if not items:
-        text = f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\nNo hay productos disponibles en esta categoría."
+        text = f"📁 <b>{CATEGORY_LABELS.get(category_name, category_name)}</b>\n\nNo hay productos disponibles en este apartado."
     else:
-        text = f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\n📦 <b>PRODUCTOS DISPONIBLES</b> 🔥\nSelecciona lo que te vas a llevar:"
+        text = f"📁 <b>{CATEGORY_LABELS.get(category_name, category_name)}</b>\n📂 <b>{SUBCATEGORY_LABELS.get(group, group)}</b>\n\n📦 <b>PRODUCTOS DISPONIBLES</b> 🔥\nSelecciona lo que te vas a llevar:"
     markup = product_list(items, page, pages, category)
     try:
         await callback.message.delete()
@@ -1841,7 +1857,13 @@ async def render_products(callback: CallbackQuery, session: AsyncSession, catego
 
 @router.callback_query(F.data.startswith("cat:"))
 async def catalog_category(callback: CallbackQuery, session: AsyncSession):
-    await render_products(callback, session, callback.data[4:], 0)
+    category = callback.data[4:]
+    await edit_or_answer(callback, f"📁 <b>{CATEGORY_LABELS.get(category, category)}</b>\n\nSelecciona un apartado:", subcategories(category))
+
+@router.callback_query(F.data.startswith("subcat:"))
+async def catalog_subcategory(callback: CallbackQuery, session: AsyncSession):
+    _, category, group = callback.data.split(":", 2)
+    await render_products(callback, session, f"{category}|{group}", 0)
 
 
 @router.callback_query(F.data.startswith("products:"))
